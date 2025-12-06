@@ -1,0 +1,5 @@
+{
+  "name": "Genealogia Resta",
+  "description": "Advanced family tree manager with GEDCOM import, user access control, and graphical visualization.",
+  "requestFramePermissions": []
+}
