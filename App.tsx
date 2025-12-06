@@ -81,43 +81,51 @@ const App: React.FC = () => {
     
     setIsLoading(true);
 
-    // Small delay to let UI render the loading spinner
+    // Small delay to ensure UI updates
     await new Promise(resolve => setTimeout(resolve, 100));
 
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
         const text = e.target?.result as string;
-        if (text) {
-            console.log("Inizio parsing GEDCOM lunghezza:", text.length);
-            const parsed = parseGedcom(text);
-            console.log("Risultato parsing:", parsed.length, "persone");
-            
-            if (parsed.length === 0) {
-                alert("Nessuna persona trovata. Il file potrebbe essere vuoto o non valido.");
-            } else {
-                if (confirm(`Trovate ${parsed.length} persone. Vuoi sostituire l'albero attuale?`)) {
-                    setPeople(parsed);
-                    savePeople(parsed);
-                    setSelectedPerson(null);
-                }
+        if (!text) {
+             alert("Il file sembra vuoto.");
+             setIsLoading(false);
+             return;
+        }
+
+        // Debug Alert
+        // alert(`File letto: ${text.length} caratteri. Inizio analisi...`);
+
+        const parsed = parseGedcom(text);
+        
+        if (parsed.length === 0) {
+            alert("ERRORE: Nessuna persona trovata nel file. Assicurati che sia un formato GEDCOM valido (estensione .ged) e non sia corrotto.");
+        } else {
+            if (confirm(`Analisi completata: trovate ${parsed.length} persone.\n\nVuoi importarle cancellando l'albero attuale?`)) {
+                setPeople(parsed);
+                savePeople(parsed);
+                setSelectedPerson(null);
+                // Force focus reset logic in FamilyTree
+                setTimeout(() => alert("Importazione riuscita!"), 100);
             }
         }
-      } catch (err) {
+      } catch (err: any) {
           console.error("Errore importazione:", err);
-          alert("Errore tecnico durante la lettura del file.");
+          alert(`Errore tecnico durante la lettura del file: ${err.message}`);
       } finally {
           setIsLoading(false);
       }
     };
     
     reader.onerror = () => {
-        alert("Impossibile leggere il file.");
+        alert("Impossibile leggere il file (Errore I/O).");
         setIsLoading(false);
     };
 
+    // Try reading
     reader.readAsText(file); 
-    event.target.value = ''; 
+    event.target.value = ''; // Reset input
   };
 
   const handleExport = () => {

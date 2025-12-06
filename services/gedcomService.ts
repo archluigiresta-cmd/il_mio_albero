@@ -1,59 +1,52 @@
 import { Person, Gender } from '../types';
 
 /**
- * Robust GEDCOM parser.
- * Uses regex to strictly identify level, optional ID, tag, and value.
+ * Ultra-Robust GEDCOM parser.
+ * Does not rely on strict regex. Manually splits lines to handle various formats.
  */
 export const parseGedcom = (content: string): Person[] => {
   if (!content || typeof content !== 'string') return [];
 
-  // 1. Clean content & Normalize line endings
-  const cleanContent = content.replace(/^\uFEFF/, ''); // Remove BOM
-  const lines = cleanContent.split(/\r?\n/);
+  // Remove BOM and split by newlines (handling mixed \r\n)
+  const lines = content.replace(/^\uFEFF/, '').split(/[\r\n]+/);
   
   const records: any[] = [];
   let currentRecord: any = null;
   const stack: any[] = []; 
 
-  // Regex to parse a line: 
-  // Level (digits) + whitespace + optional ID (@...@) + whitespace + Tag (alphanum) + whitespace + optional Value
-  // This handles multiple spaces between parts better than split(' ')
-  const lineRegex = /^\s*(\d+)\s+(@[^@]+@)?\s*(\w+)?\s*(.*)$/;
+  // 1. Build Record Hierarchy
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
 
-  // 2. Build Hierarchy
-  lines.forEach((line, index) => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
+    // Line structure: LEVEL + [optional SPACE] + [ID or TAG] + [optional SPACE] + [TAG or VALUE]
+    const parts = line.split(/\s+/); // Split by any whitespace
+    if (parts.length < 2) continue;
 
-    // Special handling for strict format vs loose format
-    // Try regex match
-    const match = line.match(lineRegex);
-    if (!match) return;
+    const levelStr = parts[0];
+    const level = parseInt(levelStr, 10);
+    if (isNaN(level)) continue;
 
-    const level = parseInt(match[1], 10);
-    const optId = match[2]; // e.g. @I1@
-    let tag = match[3];   // e.g. INDI or NAME
-    let value = match[4]; // e.g. Luigi Resta
+    let tag = '';
+    let xref_id = undefined;
+    let valueParts: string[] = [];
 
-    // FIX: GEDCOM standard quirks
-    // Case 1: "0 @I1@ INDI" -> optId=@I1@, tag=INDI, value=""
-    // Case 2: "1 NAME Luigi" -> optId=undefined, tag=NAME, value="Luigi"
-    // Case 3 (Rare): "0 HEAD" -> optId=undefined, tag=HEAD
-    
-    // If we have an ID but no tag in match[3], check if the ID was actually the tag? 
-    // No, regex structure forces ID to be @...@.
-    
-    // However, sometimes "0 @I1@ INDI" might be parsed differently if spaces are weird.
-    // Let's rely on the positions.
-    
-    let xref_id = optId;
-
-    // If tag is missing but value exists, maybe the split was weird?
-    if (!tag && value) {
-        // Fallback split logic
+    // Check for ID format: @...@
+    if (parts[1].startsWith('@') && parts[1].endsWith('@')) {
+        xref_id = parts[1];
+        tag = parts[2] || '';
+        valueParts = parts.slice(3);
+    } else {
+        tag = parts[1];
+        valueParts = parts.slice(2);
     }
 
-    const newNode = { tag: tag || '', value: value || '', xref_id, children: [] };
+    // Reconstruct value ensuring spaces are kept where appropriate
+    // (Actual raw line parsing for value is better but split/join is safe enough for names/dates)
+    let value = valueParts.join(' ');
+    
+    // Create Node
+    const newNode = { tag: tag.toUpperCase(), value, xref_id, children: [] };
 
     if (level === 0) {
       currentRecord = newNode;
@@ -61,67 +54,66 @@ export const parseGedcom = (content: string): Person[] => {
       stack.length = 0;
       stack.push(currentRecord);
     } else {
-      // Find parent
-      while (stack.length > level) {
-        stack.pop();
-      }
-      const parent = stack[stack.length - 1];
-      if (parent) {
-        parent.children.push(newNode);
-        stack.push(newNode);
-      }
+       // Find correct parent level
+       // If current level is N, parent must be at N-1.
+       // Stack[0] is level 0. Stack[level-1] is parent.
+       if (stack[level - 1]) {
+           stack[level - 1].children.push(newNode);
+           // Update stack for next children
+           stack[level] = newNode;
+           // Trim stack if we went back up? 
+           // Standard stack logic: slice to current level
+           stack.length = level + 1; 
+       }
     }
-  });
+  }
 
-  // 3. Convert to Person Objects
+  // 2. Map to Person Objects
   const personMap = new Map<string, Person>();
   const families: any[] = [];
 
   records.forEach((rec) => {
-    // Check if it's an Individual
-    // Tag could be INDI or value could be INDI (standard varies by version)
-    const isIndi = (rec.tag === 'INDI') || (rec.value && rec.value.trim() === 'INDI');
-    const isFam = (rec.tag === 'FAM') || (rec.value && rec.value.trim() === 'FAM');
+    // Identify Individuals
+    const isIndi = rec.tag === 'INDI' || (rec.value && rec.value.trim() === 'INDI');
+    const isFam = rec.tag === 'FAM' || (rec.value && rec.value.trim() === 'FAM');
 
     if (isIndi) {
-        const id = rec.xref_id || `@UNK${Math.random().toString(36).substr(2, 9)}@`;
+        const id = rec.xref_id || `@UNK${Math.random().toString(36).substr(2, 5)}@`;
         
-        const getChild = (tag: string) => rec.children.find((c: any) => c.tag === tag);
-        const getVal = (tag: string) => getChild(tag)?.value;
+        // Helper to get child value safe
+        const getVal = (node: any, tagName: string) => {
+            const child = node.children.find((c: any) => c.tag === tagName);
+            return child ? child.value : undefined;
+        };
+        const getChild = (node: any, tagName: string) => node.children.find((c: any) => c.tag === tagName);
 
-        // Name handling
-        const nameNode = getChild('NAME');
-        let rawName = nameNode ? nameNode.value : 'Sconosciuto';
-        rawName = rawName.replace(/\//g, ''); // Remove slashes /Surname/
-        const nameParts = rawName.trim().split(/\s+/);
-        
+        // Name
+        const nameRaw = getVal(rec, 'NAME') || 'Sconosciuto';
+        const nameClean = nameRaw.replace(/\//g, '').trim();
+        const nameParts = nameClean.split(/\s+/);
+        let firstName = nameClean;
         let lastName = '';
-        let firstName = rawName;
-        
         if (nameParts.length > 1) {
-             lastName = nameParts[nameParts.length - 1];
-             firstName = nameParts.slice(0, nameParts.length - 1).join(' ');
+            lastName = nameParts.pop() || '';
+            firstName = nameParts.join(' ');
         }
 
-        // Sex
-        const sexVal = getVal('SEX')?.trim().toUpperCase();
+        // Gender
+        const sex = getVal(rec, 'SEX');
         let gender = Gender.Unknown;
-        if (sexVal === 'M' || sexVal === 'MALE') gender = Gender.Male;
-        if (sexVal === 'F' || sexVal === 'FEMALE') gender = Gender.Female;
+        if (sex && (sex.startsWith('M') || sex === '1')) gender = Gender.Male;
+        if (sex && (sex.startsWith('F') || sex === '2')) gender = Gender.Female;
 
-        // Dates
-        const birtNode = getChild('BIRT');
-        const deatNode = getChild('DEAT');
+        // Vital Events
+        const birthNode = getChild(rec, 'BIRT');
+        const deathNode = getChild(rec, 'DEAT');
         
-        const getSubVal = (node: any, tag: string) => node?.children.find((c: any) => c.tag === tag)?.value;
+        const birthDate = birthNode ? getVal(birthNode, 'DATE') : undefined;
+        const birthPlace = birthNode ? getVal(birthNode, 'PLAC') : undefined;
+        const deathDate = deathNode ? getVal(deathNode, 'DATE') : undefined;
+        const deathPlace = deathNode ? getVal(deathNode, 'PLAC') : undefined;
 
-        const birthDate = getSubVal(birtNode, 'DATE');
-        const birthPlace = getSubVal(birtNode, 'PLAC');
-        const deathDate = getSubVal(deatNode, 'DATE');
-        const deathPlace = getSubVal(deatNode, 'PLAC');
-
-        // Logic: if DEAT tag is present (even without date), person is likely deceased
-        const isLiving = !deatNode; 
+        const isLiving = !deathNode && !deathDate;
 
         const p: Person = {
             id,
@@ -143,22 +135,26 @@ export const parseGedcom = (content: string): Person[] => {
     }
   });
 
-  // 4. Link Families
+  // 3. Link Relationships
   families.forEach(fam => {
-      const getChildVal = (tag: string) => fam.children.find((c: any) => c.tag === tag)?.value;
-      const husbId = getChildVal('HUSB');
-      const wifeId = getChildVal('WIFE');
-      // Children can be multiple
-      const childrenIds = fam.children.filter((c: any) => c.tag === 'CHIL').map((c: any) => c.value);
+      const getVal = (tagName: string) => {
+          const c = fam.children.find((x: any) => x.tag === tagName);
+          return c ? c.value : undefined;
+      };
+
+      const husbId = getVal('HUSB');
+      const wifeId = getVal('WIFE');
+      
+      const childrenIds = fam.children
+        .filter((c: any) => c.tag === 'CHIL')
+        .map((c: any) => c.value);
 
       const h = husbId ? personMap.get(husbId) : null;
       const w = wifeId ? personMap.get(wifeId) : null;
 
       if (h && w) {
-         if (!h.spouseIds.includes(w.id)) h.spouseIds.push(w.id);
-         if (!w.spouseIds.includes(h.id)) w.spouseIds.push(h.id);
-      } else if (h && !w) {
-          // Single parent family logic if needed
+          if (!h.spouseIds.includes(w.id)) h.spouseIds.push(w.id);
+          if (!w.spouseIds.includes(h.id)) w.spouseIds.push(h.id);
       }
 
       childrenIds.forEach((childId: string) => {
