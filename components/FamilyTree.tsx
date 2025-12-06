@@ -18,10 +18,13 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
 
-  // Initialize focus on first load
+  // Initialize or Reset focus
   useEffect(() => {
-    if (data.length > 0 && !focusId) {
-      // Try to find a patriarch (someone with no parents) or just the first person
+    // Se non c'è un focusId, o se il focusId corrente non esiste più nei nuovi dati (es. post import)
+    const currentFocusExists = focusId && data.find(p => p.id === focusId);
+    
+    if (data.length > 0 && (!focusId || !currentFocusExists)) {
+      // Cerca un capostipite (senza genitori ma con figli) o prendi il primo
       const root = data.find(p => !p.fatherId && !p.motherId && p.childrenIds.length > 0) || data[0];
       setFocusId(root.id);
     }
@@ -30,20 +33,16 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
   const drawTree = useCallback(() => {
     if (!svgRef.current || !wrapperRef.current || data.length === 0 || !focusId) return;
 
+    // Safety check: ensure focus person exists
+    const rootPerson = data.find(p => p.id === focusId);
+    if (!rootPerson) return;
+
     const width = wrapperRef.current.clientWidth;
     const height = wrapperRef.current.clientHeight;
     
     // Clear previous
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove();
-
-    // Create a hierarchy focused on the selected person
-    // Strategy: We build a tree of descendants for the "descendant view".
-    // For a complete graph, we would need a more complex force-directed layout.
-    // Given the request for "Blocks" and typical genealogy, a Tree Layout rooted at a person is standard.
-    
-    const rootPerson = data.find(p => p.id === focusId);
-    if (!rootPerson) return;
 
     // Helper to build hierarchy object for D3
     const buildHierarchy = (personId: string, depth = 0): any => {
@@ -113,7 +112,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       .attr("class", (d) => `node cursor-pointer transition-opacity duration-300 hover:opacity-80`)
       .attr("transform", (d: any) => `translate(${d.y},${d.x})`)
       .on("click", (event, d) => {
-        // Find spouses to display in the side panel
         const originalPerson = data.find(p => p.id === d.data.id);
         if (originalPerson) onSelectPerson(originalPerson);
       });
@@ -187,7 +185,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
         .attr("fill", "transparent");
         
     focusGroup.append("path")
-        .attr("d", "M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z") // Plus icon roughly
+        .attr("d", "M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z") // Plus icon
         .attr("fill", "none")
         .attr("stroke", "#64748b");
     
@@ -198,7 +196,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
 
   useEffect(() => {
     drawTree();
-    // Handle resize
     const handleResize = () => drawTree();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);

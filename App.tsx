@@ -77,17 +77,39 @@ const App: React.FC = () => {
 
     const reader = new FileReader();
     reader.onload = (e) => {
-      const text = e.target?.result as string;
-      if (text) {
-        const parsed = parseGedcom(text);
-        if (confirm(`Trovate ${parsed.length} persone nel file. Vuoi sovrascrivere l'albero attuale?`)) {
-            setPeople(parsed);
-            savePeople(parsed);
-            alert('Importazione completata con successo!');
+      try {
+        const text = e.target?.result as string;
+        if (text) {
+            console.log("File letto, inizio parsing...");
+            const parsed = parseGedcom(text);
+            console.log("Persone trovate:", parsed.length);
+            
+            if (parsed.length === 0) {
+                alert("Nessuna persona trovata nel file. Verifica che sia un file GEDCOM valido (.ged).");
+                return;
+            }
+
+            if (confirm(`Trovate ${parsed.length} persone nel file. Vuoi sovrascrivere l'albero attuale?`)) {
+                setPeople(parsed);
+                savePeople(parsed);
+                setSelectedPerson(null); // Deseleziona per evitare errori
+                alert('Importazione completata con successo!');
+            }
         }
+      } catch (err) {
+          console.error("Errore importazione:", err);
+          alert("Si è verificato un errore durante la lettura del file.");
       }
     };
+    
+    reader.onerror = () => {
+        alert("Errore nella lettura del file.");
+    };
+
     reader.readAsText(file);
+    
+    // Reset del valore input per permettere di ricaricare lo stesso file se necessario
+    event.target.value = '';
   };
 
   const handleExport = () => {
@@ -299,6 +321,7 @@ const App: React.FC = () => {
                 <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
                     <label className="flex items-center justify-center w-10 h-10 bg-white rounded-full shadow hover:bg-blue-50 cursor-pointer text-blue-600" title="Importa GEDCOM">
                         <Upload size={20} />
+                        {/* Input file deve essere resettato dopo l'uso, gestito in handleFileUpload */}
                         <input type="file" accept=".ged" onChange={handleFileUpload} className="hidden" />
                     </label>
                     <button onClick={handleExport} className="flex items-center justify-center w-10 h-10 bg-white rounded-full shadow hover:bg-blue-50 text-blue-600" title="Esporta Backup">
@@ -324,7 +347,9 @@ const App: React.FC = () => {
                         </div>
                     </div>
                 ) : (
+                    /* Key force re-render when data length or root changes dramatically */
                     <FamilyTree 
+                        key={people.length + '-' + (people[0]?.id || '0')}
                         data={people} 
                         onSelectPerson={setSelectedPerson} 
                         selectedPersonId={selectedPerson?.id}

@@ -12,6 +12,7 @@ export const parseGedcom = (content: string): Person[] => {
 
   // 1. Build a hierarchy of records
   lines.forEach((line) => {
+    // Regex slightly more permissive regarding spaces
     const match = line.match(/^\s*(\d+)\s+(@\w+@|\w+)(\s+(.*))?$/);
     if (!match) return;
 
@@ -54,7 +55,8 @@ export const parseGedcom = (content: string): Person[] => {
 
   // Pass 1: Create Persons
   records.forEach((rec) => {
-    if (rec.value === 'INDI' || rec.tag === 'INDI') { // Handle variations
+    // Check various ways INDI might be defined (value or tag)
+    if (rec.value.trim() === 'INDI' || rec.tag === 'INDI') { 
         const id = rec.xref_id;
         if (!id) return;
 
@@ -66,7 +68,7 @@ export const parseGedcom = (content: string): Person[] => {
         // Extract Name
         let rawName = nameRec ? nameRec.value : 'Unknown /Unknown/';
         rawName = rawName.replace(/\//g, '');
-        const nameParts = rawName.split(' ');
+        const nameParts = rawName.split(' ').filter((s: string) => s.trim() !== '');
         const lastName = nameParts.length > 1 ? nameParts.pop() || '' : '';
         const firstName = nameParts.join(' ');
 
@@ -76,12 +78,18 @@ export const parseGedcom = (content: string): Person[] => {
         // Determine Living Status
         // If DEAT tag exists, they are not living.
         const isLiving = !deatRec;
+        
+        // Normalize Gender
+        const sexVal = sexRec?.value?.trim().toUpperCase();
+        let gender = Gender.Unknown;
+        if (sexVal === 'M' || sexVal === 'MALE') gender = Gender.Male;
+        else if (sexVal === 'F' || sexVal === 'FEMALE') gender = Gender.Female;
 
         const p: Person = {
             id,
             firstName,
             lastName,
-            gender: sexRec?.value === 'F' ? Gender.Female : sexRec?.value === 'M' ? Gender.Male : Gender.Unknown,
+            gender,
             birthDate: getVal(birtRec, 'DATE'),
             birthPlace: getVal(birtRec, 'PLAC'),
             deathDate: getVal(deatRec, 'DATE'),
@@ -91,7 +99,7 @@ export const parseGedcom = (content: string): Person[] => {
             childrenIds: []
         };
         personMap.set(id, p);
-    } else if (rec.value === 'FAM' || rec.tag === 'FAM') {
+    } else if (rec.value.trim() === 'FAM' || rec.tag === 'FAM') {
         families.push(rec);
     }
   });
