@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { Person, Gender } from '../types';
 
@@ -12,230 +12,151 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
-  const [renderError, setRenderError] = useState<string | null>(null);
 
-  // Initialize or Reset focus
+  // Imposta un focus iniziale sicuro
   useEffect(() => {
-    const currentFocusExists = focusId && data.find(p => p.id === focusId);
-    
-    if (data.length > 0 && (!focusId || !currentFocusExists)) {
-      // Find a root-like person (no parents but has children) OR just the first person
-      const root = data.find(p => !p.fatherId && !p.motherId && p.childrenIds.length > 0) || data[0];
-      setFocusId(root.id);
+    if (data.length > 0 && !focusId) {
+        // Cerca qualcuno che abbia figli ma non genitori (un capostipite)
+        const root = data.find(p => !p.fatherId && !p.motherId && p.childrenIds.length > 0) || data[0];
+        setFocusId(root.id);
     }
   }, [data, focusId]);
 
-  const drawTree = useCallback(() => {
-    if (!svgRef.current || !wrapperRef.current || data.length === 0 || !focusId) return;
+  useEffect(() => {
+    if (!data || data.length === 0 || !focusId || !svgRef.current || !wrapperRef.current) return;
 
+    // PULIZIA
+    const svg = d3.select(svgRef.current);
+    svg.selectAll("*").remove();
+    
     try {
-        setRenderError(null);
-        // Safety check: ensure focus person exists
-        const rootPerson = data.find(p => p.id === focusId);
-        if (!rootPerson) throw new Error("Persona selezionata non trovata.");
+        const width = wrapperRef.current.clientWidth || 800;
+        const height = wrapperRef.current.clientHeight || 600;
 
-        const width = wrapperRef.current.clientWidth;
-        const height = wrapperRef.current.clientHeight;
+        // 1. COSTRUZIONE GERARCHIA (SOLO DISCENDENTI per stabilità)
+        // D3 Tree layout supporta solo alberi, non grafi ciclici.
+        // Costruiamo un albero temporaneo per la visualizzazione partendo dal focusId.
         
-        // Clear previous
-        const svg = d3.select(svgRef.current);
-        svg.selectAll("*").remove();
+        const buildNode = (id: string, depth: number): any => {
+            if (depth > 10) return null; // Limite profondità per sicurezza
+            const p = data.find(x => x.id === id);
+            if (!p) return null;
 
-        // Build Hierarchy with Loop Protection
-        const visited = new Set<string>();
+            const childrenNodes = p.childrenIds
+                .map(cid => buildNode(cid, depth + 1))
+                .filter(c => c !== null);
 
-        const buildHierarchy = (personId: string, depth = 0): any => {
-          if (depth > 20) return null; // Deep recursion safeguard
-          if (visited.has(personId)) return null; // Loop safeguard
-          visited.add(personId);
-
-          const p = data.find(x => x.id === personId);
-          if (!p) return null;
-          
-          // Get children
-          const childrenNodes = p.childrenIds
-            .map(cid => buildHierarchy(cid, depth + 1))
-            .filter(c => c !== null);
-
-          // Release from visited set for parallel branches (allowing same child from different path if valid logic existed, though rare in strict trees)
-          // Actually for strict strict tree, visited check is good.
-          visited.delete(personId); 
-
-          return {
-            ...p,
-            children: childrenNodes.length > 0 ? childrenNodes : undefined
-          };
+            return {
+                name: `${p.firstName} ${p.lastName}`,
+                data: p,
+                children: childrenNodes.length > 0 ? childrenNodes : null
+            };
         };
 
-        const hierarchyData = buildHierarchy(focusId);
-        
-        if (!hierarchyData) throw new Error("Impossibile costruire la gerarchia da questo punto.");
+        const hierarchyData = buildNode(focusId, 0);
+        if (!hierarchyData) return;
 
-        const root = d3.hierarchy(hierarchyData) as d3.HierarchyNode<Person>;
+        const root = d3.hierarchy(hierarchyData);
         
-        // Config values
-        const nodeWidth = 220;
-        const nodeHeight = 100;
-        const horizontalSep = 50;
-        const verticalSep = 100;
-
-        // Tree layout
-        const treeLayout = d3.tree<Person>().nodeSize([nodeHeight + horizontalSep, nodeWidth + verticalSep]);
+        const nodeWidth = 200;
+        const nodeHeight = 80;
         
-        // @ts-ignore
-        const nodes = treeLayout(root);
+        // Layout ad albero
+        const treeLayout = d3.tree().nodeSize([nodeHeight + 40, nodeWidth + 50]);
+        treeLayout(root);
 
-        // Zoom behavior
+        // Disegno
         const g = svg.append("g");
         
-        const zoom = d3.zoom<SVGSVGElement, unknown>()
-          .scaleExtent([0.1, 2])
-          .on("zoom", (event) => {
-            g.attr("transform", event.transform);
-          });
-
-        svg.call(zoom)
-           .call(zoom.transform, d3.zoomIdentity.translate(width / 4, height / 2).scale(0.8));
+        // Zoom e Pan
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 3])
+            .on("zoom", (event) => g.attr("transform", event.transform));
+            
+        svg.call(zoom as any)
+           .call(zoom.transform as any, d3.zoomIdentity.translate(width/2, 50).scale(0.8));
 
         // Links
         g.selectAll(".link")
-          .data(root.links())
-          .enter()
-          .append("path")
-          .attr("class", "link")
-          .attr("fill", "none")
-          .attr("stroke", "#94a3b8")
-          .attr("stroke-width", 2)
-          .attr("d", d3.linkHorizontal()
-            .x((d: any) => d.y)
-            .y((d: any) => d.x) as any
-          );
+            .data(root.links())
+            .enter()
+            .append("path")
+            .attr("class", "link")
+            .attr("fill", "none")
+            .attr("stroke", "#ccc")
+            .attr("stroke-width", 2)
+            .attr("d", d3.linkHorizontal()
+                .x((d: any) => d.y)
+                .y((d: any) => d.x) as any
+            );
 
         // Nodes
         const node = g.selectAll(".node")
-          .data(root.descendants())
-          .enter()
-          .append("g")
-          .attr("class", (d) => `node cursor-pointer transition-opacity duration-300 hover:opacity-80`)
-          .attr("transform", (d: any) => `translate(${d.y},${d.x})`)
-          .on("click", (event, d) => {
-            const originalPerson = data.find(p => p.id === d.data.id);
-            if (originalPerson) onSelectPerson(originalPerson);
-          });
-
-        // Node Box
-        node.append("rect")
-          .attr("width", nodeWidth)
-          .attr("height", nodeHeight)
-          .attr("x", 0)
-          .attr("y", -nodeHeight / 2)
-          .attr("rx", 8)
-          .attr("ry", 8)
-          .attr("fill", (d) => d.data.gender === Gender.Male ? "#eff6ff" : "#fff1f2")
-          .attr("stroke", (d) => d.data.id === selectedPersonId ? "#2563eb" : "#cbd5e1")
-          .attr("stroke-width", (d) => d.data.id === selectedPersonId ? 3 : 1)
-          .attr("filter", "drop-shadow(2px 2px 2px rgba(0,0,0,0.05))");
-
-        // Image placeholder
-        node.append("circle")
-          .attr("cx", 40)
-          .attr("cy", 0)
-          .attr("r", 25)
-          .attr("fill", "#e2e8f0")
-          .attr("stroke", "#cbd5e1");
-        
-        // Initials
-        node.append("text")
-          .attr("x", 40)
-          .attr("y", 6)
-          .attr("text-anchor", "middle")
-          .attr("class", "text-sm font-bold text-slate-500 pointer-events-none")
-          .text((d) => {
-              const first = d.data.firstName?.[0] || '';
-              const last = d.data.lastName?.[0] || '';
-              return (first + last).toUpperCase();
-          });
-
-        // Name
-        node.append("text")
-          .attr("x", 80)
-          .attr("y", -10)
-          .attr("class", "text-sm font-semibold text-slate-800 font-serif")
-          .text((d) => {
-             const full = `${d.data.firstName} ${d.data.lastName}`;
-             return full.length > 18 ? full.substring(0, 16) + '...' : full;
-          });
-
-        // Dates
-        node.append("text")
-          .attr("x", 80)
-          .attr("y", 10)
-          .attr("class", "text-xs text-slate-500")
-          .text((d) => {
-            const b = d.data.birthDate ? new Date(d.data.birthDate).getFullYear() || d.data.birthDate : '?';
-            const dDate = d.data.deathDate ? new Date(d.data.deathDate).getFullYear() || d.data.deathDate : '';
-            return `${b} - ${dDate}`;
-          });
-          
-        // Action: Set as Focus
-        const focusGroup = node.append("g")
-            .attr("transform", `translate(${nodeWidth - 30}, ${-nodeHeight/2 + 10})`)
+            .data(root.descendants())
+            .enter()
+            .append("g")
+            .attr("class", "node")
+            .attr("transform", (d: any) => `translate(${d.y},${d.x})`)
             .style("cursor", "pointer")
-            .on("click", (e, d) => {
-                e.stopPropagation();
-                setFocusId(d.data.id);
+            .on("click", (event, d: any) => {
+                onSelectPerson(d.data.data);
             });
-        
-        focusGroup.append("rect")
-            .attr("width", 20)
-            .attr("height", 20)
-            .attr("fill", "transparent");
-            
-        focusGroup.append("path")
-            .attr("d", "M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z")
-            .attr("fill", "none")
-            .attr("stroke", "#64748b");
-        
-        focusGroup.append("title").text("Imposta come radice albero");
 
-    } catch (err: any) {
-        console.error("Tree Render Error:", err);
-        setRenderError(err.message || "Errore sconosciuto nel disegno dell'albero.");
+        // Rettangolo Nodo
+        node.append("rect")
+            .attr("width", nodeWidth)
+            .attr("height", nodeHeight)
+            .attr("y", -nodeHeight / 2)
+            .attr("rx", 5)
+            .attr("ry", 5)
+            .attr("fill", (d: any) => d.data.data.gender === Gender.Male ? "#ebf8ff" : "#fff5f5")
+            .attr("stroke", (d: any) => d.data.data.id === selectedPersonId ? "#3182ce" : "#cbd5e0")
+            .attr("stroke-width", (d: any) => d.data.data.id === selectedPersonId ? 3 : 1);
+
+        // Testo Nome
+        node.append("text")
+            .attr("dy", -5)
+            .attr("x", 10)
+            .style("font-weight", "bold")
+            .style("font-family", "serif")
+            .text((d: any) => d.data.name);
+
+        // Testo Date
+        node.append("text")
+            .attr("dy", 15)
+            .attr("x", 10)
+            .style("font-size", "12px")
+            .style("fill", "#666")
+            .text((d: any) => {
+                const b = d.data.data.birthDate || '?';
+                return `Nascita: ${b}`;
+            });
+
+        // Pulsante "Rendi Radice"
+        const btn = node.append("g")
+            .attr("transform", `translate(${nodeWidth - 25}, ${-nodeHeight/2 + 5})`)
+            .on("click", (e, d: any) => {
+                e.stopPropagation();
+                setFocusId(d.data.data.id);
+            });
+            
+        btn.append("rect").attr("width", 20).attr("height", 20).attr("fill", "transparent");
+        btn.append("text").text("⚲").attr("dy", 15).style("font-size", "16px");
+
+    } catch (e) {
+        console.error("Errore disegno albero:", e);
+        svg.append("text").text("Errore visualizzazione").attr("x", 50).attr("y", 50);
     }
 
-  }, [data, focusId, onSelectPerson, selectedPersonId]);
-
-  useEffect(() => {
-    drawTree();
-    const handleResize = () => drawTree();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [drawTree]);
-
-  if (renderError) {
-      return (
-          <div className="w-full h-full flex flex-col items-center justify-center bg-red-50 text-red-800 p-4">
-              <h3 className="font-bold mb-2">Errore Visualizzazione Albero</h3>
-              <p className="text-sm mb-4">{renderError}</p>
-              <button 
-                onClick={() => setFocusId(data[0]?.id || null)}
-                className="px-4 py-2 bg-white border border-red-200 rounded shadow hover:bg-red-100"
-              >
-                  Reset Vista
-              </button>
-          </div>
-      )
-  }
+  }, [data, focusId, selectedPersonId, onSelectPerson]);
 
   return (
-    <div className="relative w-full h-full bg-slate-50 overflow-hidden border border-slate-200 rounded-lg shadow-inner" ref={wrapperRef}>
-        <div className="absolute top-4 left-4 z-10 bg-white/90 p-2 rounded shadow backdrop-blur-sm text-xs text-slate-600">
-            <p><strong>Vista:</strong> Discendenti</p>
-            <p><strong>Radice:</strong> {data.find(p => p.id === focusId)?.firstName || 'Nessuno'}</p>
-            <p className="italic mt-1">Clicca su una persona per dettagli.</p>
-            <p className="italic">Usa l'icona + sul nodo per ricentrare.</p>
-        </div>
-      <svg ref={svgRef} className="w-full h-full cursor-grab active:cursor-grabbing"></svg>
+    <div ref={wrapperRef} className="w-full h-full bg-slate-50 border overflow-hidden relative">
+      <div className="absolute top-2 left-2 bg-white/80 p-2 text-xs rounded z-10">
+        Radice attuale: {data.find(p => p.id === focusId)?.firstName} <br/>
+        (Clicca '⚲' su un nodo per centrare su di lui)
+      </div>
+      <svg ref={svgRef} className="w-full h-full"></svg>
     </div>
   );
 };
