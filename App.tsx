@@ -5,7 +5,7 @@ import { getStoredPeople, savePeople, getSession, loginUser, registerUser, logou
 import { FamilyTree } from './components/FamilyTree';
 import { PersonEditor } from './components/PersonEditor';
 import { AdminPanel } from './components/AdminPanel';
-import { LogOut, Upload, Download, Plus, TreeDeciduous, Lock, Trash2 } from 'lucide-react';
+import { LogOut, Upload, Download, Plus, TreeDeciduous, Lock, Trash2, Loader2 } from 'lucide-react';
 
 const App: React.FC = () => {
   // Auth State
@@ -21,6 +21,7 @@ const App: React.FC = () => {
   const [people, setPeople] = useState<Person[]>([]);
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
   const [view, setView] = useState<'tree' | 'admin'>('tree');
+  const [isLoading, setIsLoading] = useState(false);
   
   // Initial Load with Error Safety
   useEffect(() => {
@@ -74,41 +75,49 @@ const App: React.FC = () => {
   };
 
   // Handlers - GEDCOM
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    
+    setIsLoading(true);
+
+    // Small delay to let UI render the loading spinner
+    await new Promise(resolve => setTimeout(resolve, 100));
 
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
         const text = e.target?.result as string;
         if (text) {
+            console.log("Inizio parsing GEDCOM lunghezza:", text.length);
             const parsed = parseGedcom(text);
+            console.log("Risultato parsing:", parsed.length, "persone");
             
             if (parsed.length === 0) {
-                alert("Nessuna persona trovata o formato non valido. Prova un altro file GEDCOM.");
-                return;
-            }
-
-            if (confirm(`Trovate ${parsed.length} persone. Sovrascrivere l'archivio attuale?`)) {
-                setPeople(parsed);
-                savePeople(parsed);
-                setSelectedPerson(null);
-                alert('Importazione completata!');
+                alert("Nessuna persona trovata. Il file potrebbe essere vuoto o non valido.");
+            } else {
+                if (confirm(`Trovate ${parsed.length} persone. Vuoi sostituire l'albero attuale?`)) {
+                    setPeople(parsed);
+                    savePeople(parsed);
+                    setSelectedPerson(null);
+                }
             }
         }
       } catch (err) {
           console.error("Errore importazione:", err);
-          alert("Errore durante la lettura del file. Verifica che sia un file di testo valido.");
+          alert("Errore tecnico durante la lettura del file.");
+      } finally {
+          setIsLoading(false);
       }
     };
     
     reader.onerror = () => {
         alert("Impossibile leggere il file.");
+        setIsLoading(false);
     };
 
-    reader.readAsText(file); // Default UTF-8, usually handles standard GEDCOMs
-    event.target.value = ''; // Reset input
+    reader.readAsText(file); 
+    event.target.value = ''; 
   };
 
   const handleExport = () => {
@@ -266,14 +275,13 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* Emergency Reset Button for White Screen issues */}
+        {/* Emergency Reset Button */}
         <button 
-            onClick={() => { if(confirm("Questo cancellerà TUTTI i dati salvati e resetterà l'app. Usare solo in caso di blocco.")) hardReset(); }}
+            onClick={() => { if(confirm("Questo cancellerà TUTTI i dati locali. Continuare?")) hardReset(); }}
             className="absolute bottom-4 right-4 flex items-center gap-2 text-xs text-red-400 hover:text-red-600 bg-white/50 p-2 rounded border border-red-200"
-            title="Usa se l'applicazione è bloccata"
         >
             <Trash2 size={14} />
-            Reset Totale Applicazione
+            Reset Applicazione
         </button>
       </div>
     );
@@ -306,14 +314,22 @@ const App: React.FC = () => {
       </header>
 
       <div className="flex-1 overflow-hidden relative">
+        {isLoading && (
+            <div className="absolute inset-0 z-50 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center">
+                <Loader2 size={48} className="text-blue-600 animate-spin mb-4" />
+                <p className="text-lg font-serif text-slate-700">Elaborazione file GEDCOM in corso...</p>
+                <p className="text-sm text-slate-500">Potrebbe richiedere qualche secondo.</p>
+            </div>
+        )}
+
         {view === 'admin' ? (
             <AdminPanel />
         ) : (
             <>
                 <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
-                    <label className="flex items-center justify-center w-10 h-10 bg-white rounded-full shadow hover:bg-blue-50 cursor-pointer text-blue-600" title="Importa GEDCOM">
+                    <label className={`flex items-center justify-center w-10 h-10 bg-white rounded-full shadow hover:bg-blue-50 cursor-pointer text-blue-600 ${isLoading ? 'opacity-50 pointer-events-none' : ''}`} title="Importa GEDCOM">
                         <Upload size={20} />
-                        <input type="file" accept=".ged" onChange={handleFileUpload} className="hidden" />
+                        <input type="file" accept=".ged" onChange={handleFileUpload} className="hidden" disabled={isLoading} />
                     </label>
                     <button onClick={handleExport} className="flex items-center justify-center w-10 h-10 bg-white rounded-full shadow hover:bg-blue-50 text-blue-600" title="Esporta Backup">
                         <Download size={20} />
@@ -330,7 +346,7 @@ const App: React.FC = () => {
                         <div className="flex gap-4">
                             <label className="px-4 py-2 bg-blue-600 text-white rounded cursor-pointer hover:bg-blue-700">
                                 Importa GEDCOM
-                                <input type="file" accept=".ged" onChange={handleFileUpload} className="hidden" />
+                                <input type="file" accept=".ged" onChange={handleFileUpload} className="hidden" disabled={isLoading} />
                             </label>
                             <button onClick={handleCreateNewRoot} className="px-4 py-2 border border-blue-600 text-blue-600 rounded hover:bg-blue-50">
                                 Crea Manualmente
