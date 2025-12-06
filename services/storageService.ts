@@ -1,4 +1,4 @@
-import { Person, User } from '../types';
+import { Person, User, Gender } from '../types';
 import { ADMIN_EMAIL, ADMIN_PASSWORD } from '../constants';
 
 const KEY_DATA = 'genealogy_data_v1';
@@ -7,13 +7,44 @@ const KEY_SESSION = 'genealogy_session_v1';
 
 // --- Data Management (The Tree) ---
 
+// Helper to ensure data is valid and doesn't crash the UI
+const sanitizePerson = (p: any): Person => {
+  return {
+    id: p.id || `@I${Date.now()}@`,
+    firstName: p.firstName || 'Sconosciuto',
+    lastName: p.lastName || '',
+    gender: p.gender || Gender.Unknown,
+    isLiving: p.isLiving !== undefined ? p.isLiving : true,
+    email: p.email || '',
+    prefix: p.prefix || '',
+    suffix: p.suffix || '',
+    birthDate: p.birthDate || '',
+    birthPlace: p.birthPlace || '',
+    deathDate: p.deathDate || '',
+    deathPlace: p.deathPlace || '',
+    notes: p.notes || '',
+    // Ensure arrays exist to prevent .map/.filter crashes
+    spouseIds: Array.isArray(p.spouseIds) ? p.spouseIds : [],
+    childrenIds: Array.isArray(p.childrenIds) ? p.childrenIds : [],
+    fatherId: p.fatherId,
+    motherId: p.motherId
+  };
+};
+
 export const getStoredPeople = (): Person[] => {
   try {
     const data = localStorage.getItem(KEY_DATA);
-    return data ? JSON.parse(data) : [];
+    if (!data) return [];
+    
+    const parsed = JSON.parse(data);
+    if (!Array.isArray(parsed)) return [];
+
+    // Sanitize every record
+    return parsed.map(sanitizePerson);
+
   } catch (e) {
     console.error("Errore lettura dati salvati (resetto DB locale):", e);
-    localStorage.removeItem(KEY_DATA); // Pulisce dati corrotti
+    // Non cancelliamo automaticamente per sicurezza, ma ritorniamo array vuoto
     return [];
   }
 };
@@ -29,6 +60,13 @@ export const savePeople = (people: Person[]) => {
 
 export const clearData = () => {
     localStorage.removeItem(KEY_DATA);
+    localStorage.removeItem(KEY_SESSION);
+    // Mantieniamo gli utenti per non perdere le registrazioni, opzionale
+}
+
+export const hardReset = () => {
+    localStorage.clear();
+    window.location.reload();
 }
 
 // --- User Management (Auth) ---

@@ -1,36 +1,50 @@
 import { Person, Gender } from '../types';
 
 /**
- * A simple GEDCOM parser.
- * It reads the line-based structure and converts INDI and FAM records into our Person graph.
+ * Robust GEDCOM parser.
+ * Reads line by line and splits by spaces, handling loose formats.
  */
 export const parseGedcom = (content: string): Person[] => {
-  // Remove BOM (Byte Order Mark) if present at the start of the string
-  const cleanContent = content.replace(/^\uFEFF/, '');
-  
+  // 1. Clean content
+  const cleanContent = content.replace(/^\uFEFF/, ''); // Remove BOM
   const lines = cleanContent.split(/\r?\n/);
+  
   const records: any[] = [];
   let currentRecord: any = null;
-  const stack: any[] = [];
+  const stack: any[] = []; // Parent stack for hierarchy
 
-  // 1. Build a hierarchy of records
+  // 2. Build Hierarchy
   lines.forEach((line) => {
-    // Regex updated to allow ID characters like '-' inside @...@ 
-    // Format: Level + Space + (ID OR TAG) + Optional Space + Value
-    const match = line.match(/^\s*(\d+)\s+(@[^@]+@|[A-Za-z0-9_]+)(\s+(.*))?$/);
-    if (!match) return;
+    const trimmed = line.trim();
+    if (!trimmed) return;
 
-    const level = parseInt(match[1], 10);
-    const tagOrId = match[2];
-    const value = match[4] || '';
+    // Standard GEDCOM: Level + Space + [Optional ID] + Space + Tag + Space + Value
+    // Example 1: "0 @I1@ INDI" -> Level:0, ID:@I1@, Tag:INDI
+    // Example 2: "1 NAME Luigi" -> Level:1, Tag:NAME, Value:Luigi
+    
+    // Split by first 2 spaces to isolate Level, Tag/ID, and Rest
+    const parts = trimmed.split(' ');
+    const levelStr = parts[0];
+    const level = parseInt(levelStr, 10);
+    
+    if (isNaN(level)) return; // Skip invalid lines
 
-    let tag = tagOrId;
+    let tag = '';
     let xref_id = undefined;
+    let value = '';
 
-    // Check if it's a definition like "0 @I1@ INDI" or "0 @I-100@ INDI"
-    if (tagOrId.startsWith('@')) {
-      xref_id = tagOrId;
-      tag = match[4] ? match[4].trim() : ''; 
+    if (parts.length > 2 && parts[1].startsWith('@') && parts[1].endsWith('@')) {
+        // Case: 0 @I1@ INDI
+        xref_id = parts[1];
+        tag = parts[2];
+        value = parts.slice(3).join(' ');
+    } else if (parts.length > 1) {
+        // Case: 1 NAME Luigi Resta
+        tag = parts[1];
+        value = parts.slice(2).join(' ');
+    } else {
+        // Just Level (rare/invalid)
+        return;
     }
 
     const newNode = { tag, value, xref_id, children: [] };
@@ -41,7 +55,8 @@ export const parseGedcom = (content: string): Person[] => {
       stack.length = 0;
       stack.push(currentRecord);
     } else {
-      // Find parent at level - 1
+      // Find parent (stack should have elements up to 'level')
+      // If level is 1, parent is at index 0.
       while (stack.length > level) {
         stack.pop();
       }
@@ -53,89 +68,96 @@ export const parseGedcom = (content: string): Person[] => {
     }
   });
 
-  // 2. Convert Records to Persons
+  // 3. Convert to Person Objects
   const personMap = new Map<string, Person>();
   const families: any[] = [];
 
-  // Pass 1: Create Persons
   records.forEach((rec) => {
-    // Check various ways INDI might be defined (value or tag)
-    if (rec.value.trim() === 'INDI' || rec.tag === 'INDI') { 
-        const id = rec.xref_id;
-        if (!id) return;
-
-        const nameRec = rec.children.find((c: any) => c.tag === 'NAME');
-        const sexRec = rec.children.find((c: any) => c.tag === 'SEX');
-        const birtRec = rec.children.find((c: any) => c.tag === 'BIRT');
-        const deatRec = rec.children.find((c: any) => c.tag === 'DEAT');
+    // Check if it's an Individual
+    if ((rec.tag === 'INDI') || (rec.value && rec.value.trim() === 'INDI')) {
+        const id = rec.xref_id || `@UNK${Math.random().toString(36).substr(2, 9)}@`;
         
-        // Extract Name
-        let rawName = nameRec ? nameRec.value : 'Unknown /Unknown/';
-        rawName = rawName.replace(/\//g, '');
-        const nameParts = rawName.split(' ').filter((s: string) => s.trim() !== '');
+        // Helper to find child tag value
+        const getVal = (parent: any, tagName: string) => {
+            const node = parent.children.find((c: any) => c.tag === tagName);
+            return node ? node.value : undefined;
+        };
+        const getChildNode = (parent: any, tagName: string) => parent.children.find((c: any) => c.tag === tagName);
+
+        // Name
+        const nameNode = getChildNode(rec, 'NAME');
+        let rawName = nameNode ? nameNode.value : 'Sconosciuto';
+        rawName = rawName.replace(/\//g, ''); // Remove slashes
+        const nameParts = rawName.split(' ').filter((s: string) => s.trim().length > 0);
         const lastName = nameParts.length > 1 ? nameParts.pop() || '' : '';
         const firstName = nameParts.join(' ');
 
-        // Extract Dates
-        const getVal = (parent: any, tag: string) => parent?.children.find((c: any) => c.tag === tag)?.value;
-
-        // Determine Living Status
-        // If DEAT tag exists, they are not living.
-        const isLiving = !deatRec;
-        
-        // Normalize Gender
-        const sexVal = sexRec?.value?.trim().toUpperCase();
+        // Sex
+        const sexVal = getVal(rec, 'SEX');
         let gender = Gender.Unknown;
         if (sexVal === 'M' || sexVal === 'MALE') gender = Gender.Male;
-        else if (sexVal === 'F' || sexVal === 'FEMALE') gender = Gender.Female;
+        if (sexVal === 'F' || sexVal === 'FEMALE') gender = Gender.Female;
+
+        // Dates
+        const birtNode = getChildNode(rec, 'BIRT');
+        const deatNode = getChildNode(rec, 'DEAT');
+
+        const birthDate = birtNode ? getVal(birtNode, 'DATE') : undefined;
+        const birthPlace = birtNode ? getVal(birtNode, 'PLAC') : undefined;
+        const deathDate = deatNode ? getVal(deatNode, 'DATE') : undefined;
+        const deathPlace = deatNode ? getVal(deatNode, 'PLAC') : undefined;
+
+        // Living Logic: If explicit DEAT tag exists, they are dead. 
+        // Or if birth is very old (e.g. > 110 years ago), but we'll stick to DEAT tag presence for now.
+        const isLiving = !deatNode;
 
         const p: Person = {
             id,
             firstName,
             lastName,
             gender,
-            birthDate: getVal(birtRec, 'DATE'),
-            birthPlace: getVal(birtRec, 'PLAC'),
-            deathDate: getVal(deatRec, 'DATE'),
-            deathPlace: getVal(deatRec, 'PLAC'),
+            birthDate,
+            birthPlace,
+            deathDate,
+            deathPlace,
             isLiving,
             spouseIds: [],
             childrenIds: []
         };
         personMap.set(id, p);
-    } else if (rec.value.trim() === 'FAM' || rec.tag === 'FAM') {
+
+    } else if ((rec.tag === 'FAM') || (rec.value && rec.value.trim() === 'FAM')) {
         families.push(rec);
     }
   });
 
-  // Pass 2: Link Families
+  // 4. Link Families
   families.forEach(fam => {
-      const husb = fam.children.find((c: any) => c.tag === 'HUSB')?.value;
-      const wife = fam.children.find((c: any) => c.tag === 'WIFE')?.value;
-      const children = fam.children.filter((c: any) => c.tag === 'CHIL').map((c: any) => c.value);
+      // Find IDs in Family
+      const husbId = fam.children.find((c: any) => c.tag === 'HUSB')?.value;
+      const wifeId = fam.children.find((c: any) => c.tag === 'WIFE')?.value;
+      const childrenIds = fam.children.filter((c: any) => c.tag === 'CHIL').map((c: any) => c.value);
 
-      if (husb && wife) {
-          const h = personMap.get(husb);
-          const w = personMap.get(wife);
-          if (h && w) {
-              if(!h.spouseIds.includes(wife)) h.spouseIds.push(wife);
-              if(!w.spouseIds.includes(husb)) w.spouseIds.push(husb);
-          }
+      const h = husbId ? personMap.get(husbId) : null;
+      const w = wifeId ? personMap.get(wifeId) : null;
+
+      // Link Spouses
+      if (h && w) {
+         if (!h.spouseIds.includes(w.id)) h.spouseIds.push(w.id);
+         if (!w.spouseIds.includes(h.id)) w.spouseIds.push(h.id);
       }
 
-      children.forEach((childId: string) => {
-          const child = personMap.get(childId);
-          if (child) {
-              if (husb) child.fatherId = husb;
-              if (wife) child.motherId = wife;
-              
-              if (husb) {
-                  const father = personMap.get(husb);
-                  if (father && !father.childrenIds.includes(childId)) father.childrenIds.push(childId);
+      // Link Children
+      childrenIds.forEach((childId: string) => {
+          const c = personMap.get(childId);
+          if (c) {
+              if (h) {
+                  c.fatherId = h.id;
+                  if (!h.childrenIds.includes(c.id)) h.childrenIds.push(c.id);
               }
-              if (wife) {
-                  const mother = personMap.get(wife);
-                  if (mother && !mother.childrenIds.includes(childId)) mother.childrenIds.push(childId);
+              if (w) {
+                  c.motherId = w.id;
+                  if (!w.childrenIds.includes(c.id)) w.childrenIds.push(c.id);
               }
           }
       });

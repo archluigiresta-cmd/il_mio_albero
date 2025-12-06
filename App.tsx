@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Person, User, Gender } from './types';
 import { parseGedcom } from './services/gedcomService';
-import { getStoredPeople, savePeople, getSession, loginUser, registerUser, logout, clearData } from './services/storageService';
+import { getStoredPeople, savePeople, getSession, loginUser, registerUser, logout, hardReset } from './services/storageService';
 import { FamilyTree } from './components/FamilyTree';
 import { PersonEditor } from './components/PersonEditor';
 import { AdminPanel } from './components/AdminPanel';
-import { LogOut, Upload, Download, Plus, TreeDeciduous, Lock, Menu } from 'lucide-react';
+import { LogOut, Upload, Download, Plus, TreeDeciduous, Lock, Trash2 } from 'lucide-react';
 
 const App: React.FC = () => {
   // Auth State
@@ -21,16 +21,19 @@ const App: React.FC = () => {
   const [people, setPeople] = useState<Person[]>([]);
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
   const [view, setView] = useState<'tree' | 'admin'>('tree');
-  const [isSidebarOpen, setSidebarOpen] = useState(false);
-
-  // Initial Load
+  
+  // Initial Load with Error Safety
   useEffect(() => {
-    const session = getSession();
-    if (session) {
-      setUser(session);
+    try {
+        const session = getSession();
+        if (session) {
+            setUser(session);
+        }
+        const loadedPeople = getStoredPeople();
+        setPeople(loadedPeople);
+    } catch (e) {
+        console.error("Critical Init Error:", e);
     }
-    const loadedPeople = getStoredPeople();
-    setPeople(loadedPeople);
   }, []);
 
   // Save on change
@@ -59,7 +62,7 @@ const App: React.FC = () => {
     const res = registerUser(email, password, fullName);
     if (res.success) {
       setAuthSuccess(res.message);
-      setAuthMode('login'); // Switch to login to see message
+      setAuthMode('login'); 
     } else {
       setAuthError(res.message);
     }
@@ -80,36 +83,32 @@ const App: React.FC = () => {
       try {
         const text = e.target?.result as string;
         if (text) {
-            console.log("File letto, inizio parsing...");
             const parsed = parseGedcom(text);
-            console.log("Persone trovate:", parsed.length);
             
             if (parsed.length === 0) {
-                alert("Nessuna persona trovata nel file. Verifica che sia un file GEDCOM valido (.ged).");
+                alert("Nessuna persona trovata o formato non valido. Prova un altro file GEDCOM.");
                 return;
             }
 
-            if (confirm(`Trovate ${parsed.length} persone nel file. Vuoi sovrascrivere l'albero attuale?`)) {
+            if (confirm(`Trovate ${parsed.length} persone. Sovrascrivere l'archivio attuale?`)) {
                 setPeople(parsed);
                 savePeople(parsed);
-                setSelectedPerson(null); // Deseleziona per evitare errori
-                alert('Importazione completata con successo!');
+                setSelectedPerson(null);
+                alert('Importazione completata!');
             }
         }
       } catch (err) {
           console.error("Errore importazione:", err);
-          alert("Si è verificato un errore durante la lettura del file.");
+          alert("Errore durante la lettura del file. Verifica che sia un file di testo valido.");
       }
     };
     
     reader.onerror = () => {
-        alert("Errore nella lettura del file.");
+        alert("Impossibile leggere il file.");
     };
 
-    reader.readAsText(file);
-    
-    // Reset del valore input per permettere di ricaricare lo stesso file se necessario
-    event.target.value = '';
+    reader.readAsText(file); // Default UTF-8, usually handles standard GEDCOMs
+    event.target.value = ''; // Reset input
   };
 
   const handleExport = () => {
@@ -125,22 +124,20 @@ const App: React.FC = () => {
   // Handlers - Person Management
   const handleUpdatePerson = (updated: Person) => {
     setPeople(prev => prev.map(p => p.id === updated.id ? updated : p));
-    setSelectedPerson(null); // Close sidebar
+    setSelectedPerson(null); 
   };
 
   const handleAddRelative = (type: 'parent' | 'child' | 'spouse', sourceId: string) => {
-     // Create new ID
-     const newId = `@I${Date.now()}@`; // Simple mock ID generator
+     const newId = `@I${Date.now()}@`; 
      const sourcePerson = people.find(p => p.id === sourceId);
      if (!sourcePerson) return;
 
      const newPerson: Person = {
          id: newId,
          firstName: 'Nuova',
-         lastName: sourcePerson.lastName, // default assumption
+         lastName: sourcePerson.lastName,
          gender: Gender.Unknown,
          isLiving: true,
-         email: '',
          spouseIds: [],
          childrenIds: []
      };
@@ -163,7 +160,6 @@ const App: React.FC = () => {
      } else if (type === 'spouse') {
          newPerson.spouseIds = [sourceId];
          updatedSource.spouseIds = [...updatedSource.spouseIds, newId];
-         // Assume children might be shared? Not for now.
      }
 
      setPeople(prev => {
@@ -171,12 +167,10 @@ const App: React.FC = () => {
          return [...others, updatedSource, ...updates];
      });
      
-     // Select the new person to edit immediately
      setTimeout(() => setSelectedPerson(newPerson), 100);
   };
 
   const handleDeletePerson = (id: string) => {
-      // Very basic delete: remove person, remove references in others
       const target = people.find(p => p.id === id);
       if(!target) return;
 
@@ -210,7 +204,7 @@ const App: React.FC = () => {
   // --- Render: Login Screen ---
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4">
+      <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4 relative">
         <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-md">
           <div className="flex justify-center mb-4">
             <TreeDeciduous size={48} className="text-blue-600" />
@@ -218,16 +212,8 @@ const App: React.FC = () => {
           <h1 className="text-2xl font-serif font-bold text-center text-slate-800 mb-2">Genealogia Resta</h1>
           <p className="text-center text-slate-500 mb-6 text-sm">Accesso riservato. Gestisci la tua storia familiare.</p>
 
-          {authSuccess && (
-            <div className="bg-green-100 text-green-700 p-3 rounded mb-4 text-sm">
-              {authSuccess}
-            </div>
-          )}
-          {authError && (
-            <div className="bg-red-100 text-red-700 p-3 rounded mb-4 text-sm">
-              {authError}
-            </div>
-          )}
+          {authSuccess && <div className="bg-green-100 text-green-700 p-3 rounded mb-4 text-sm">{authSuccess}</div>}
+          {authError && <div className="bg-red-100 text-red-700 p-3 rounded mb-4 text-sm">{authError}</div>}
 
           <form onSubmit={authMode === 'login' ? handleLogin : handleRegister} className="space-y-4">
             {authMode === 'register' && (
@@ -279,6 +265,16 @@ const App: React.FC = () => {
             )}
           </div>
         </div>
+
+        {/* Emergency Reset Button for White Screen issues */}
+        <button 
+            onClick={() => { if(confirm("Questo cancellerà TUTTI i dati salvati e resetterà l'app. Usare solo in caso di blocco.")) hardReset(); }}
+            className="absolute bottom-4 right-4 flex items-center gap-2 text-xs text-red-400 hover:text-red-600 bg-white/50 p-2 rounded border border-red-200"
+            title="Usa se l'applicazione è bloccata"
+        >
+            <Trash2 size={14} />
+            Reset Totale Applicazione
+        </button>
       </div>
     );
   }
@@ -286,13 +282,11 @@ const App: React.FC = () => {
   // --- Render: Main App ---
   return (
     <div className="flex h-screen flex-col bg-slate-50">
-      {/* Header */}
       <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 lg:px-8 shadow-sm z-20">
         <div className="flex items-center gap-3">
             <TreeDeciduous className="text-blue-600" />
             <h1 className="text-xl font-serif font-bold text-slate-800 hidden sm:block">Genealogia Resta</h1>
         </div>
-
         <div className="flex items-center gap-4">
            {user.role === 'admin' && (
                <button 
@@ -311,17 +305,14 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Content */}
       <div className="flex-1 overflow-hidden relative">
         {view === 'admin' ? (
             <AdminPanel />
         ) : (
             <>
-                {/* Toolbar */}
                 <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
                     <label className="flex items-center justify-center w-10 h-10 bg-white rounded-full shadow hover:bg-blue-50 cursor-pointer text-blue-600" title="Importa GEDCOM">
                         <Upload size={20} />
-                        {/* Input file deve essere resettato dopo l'uso, gestito in handleFileUpload */}
                         <input type="file" accept=".ged" onChange={handleFileUpload} className="hidden" />
                     </label>
                     <button onClick={handleExport} className="flex items-center justify-center w-10 h-10 bg-white rounded-full shadow hover:bg-blue-50 text-blue-600" title="Esporta Backup">
@@ -347,7 +338,6 @@ const App: React.FC = () => {
                         </div>
                     </div>
                 ) : (
-                    /* Key force re-render when data length or root changes dramatically */
                     <FamilyTree 
                         key={people.length + '-' + (people[0]?.id || '0')}
                         data={people} 
@@ -359,7 +349,6 @@ const App: React.FC = () => {
         )}
       </div>
 
-      {/* Slide-over Person Editor */}
       {selectedPerson && (
           <PersonEditor 
             person={selectedPerson} 
