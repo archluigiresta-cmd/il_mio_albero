@@ -8,12 +8,23 @@ const KEY_SESSION = 'genealogy_session_v1';
 // --- Data Management (The Tree) ---
 
 export const getStoredPeople = (): Person[] => {
-  const data = localStorage.getItem(KEY_DATA);
-  return data ? JSON.parse(data) : [];
+  try {
+    const data = localStorage.getItem(KEY_DATA);
+    return data ? JSON.parse(data) : [];
+  } catch (e) {
+    console.error("Errore lettura dati salvati (resetto DB locale):", e);
+    localStorage.removeItem(KEY_DATA); // Pulisce dati corrotti
+    return [];
+  }
 };
 
 export const savePeople = (people: Person[]) => {
-  localStorage.setItem(KEY_DATA, JSON.stringify(people));
+  try {
+    localStorage.setItem(KEY_DATA, JSON.stringify(people));
+  } catch (e) {
+    console.error("Errore salvataggio:", e);
+    alert("Attenzione: Memoria locale piena o errore di salvataggio.");
+  }
 };
 
 export const clearData = () => {
@@ -23,13 +34,13 @@ export const clearData = () => {
 // --- User Management (Auth) ---
 
 export const getStoredUsers = (): User[] => {
-  const data = localStorage.getItem(KEY_USERS);
-  let users: User[] = data ? JSON.parse(data) : [];
-  
-  // Ensure Admin exists conceptually (though we verify explicitly)
-  // We don't necessarily need to store the admin in the user list if we hardcode the check,
-  // but it helps for the UI to be consistent.
-  return users;
+  try {
+    const data = localStorage.getItem(KEY_USERS);
+    return data ? JSON.parse(data) : [];
+  } catch (e) {
+    console.error("Errore lettura utenti:", e);
+    return [];
+  }
 };
 
 export const registerUser = (email: string, password: string, fullName: string): { success: boolean, message: string } => {
@@ -92,8 +103,14 @@ export const logout = () => {
 };
 
 export const getSession = (): User | null => {
-  const data = localStorage.getItem(KEY_SESSION);
-  return data ? JSON.parse(data) : null;
+  try {
+    const data = localStorage.getItem(KEY_SESSION);
+    return data ? JSON.parse(data) : null;
+  } catch (e) {
+    console.error("Errore sessione:", e);
+    localStorage.removeItem(KEY_SESSION);
+    return null;
+  }
 };
 
 export const approveUser = (email: string) => {

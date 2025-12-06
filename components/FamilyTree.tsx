@@ -44,8 +44,14 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove();
 
-    // Helper to build hierarchy object for D3
+    // Helper to build hierarchy object for D3 with loop protection
+    const visited = new Set<string>();
+
     const buildHierarchy = (personId: string, depth = 0): any => {
+      // Loop protection
+      if (visited.has(personId)) return null;
+      visited.add(personId);
+
       const p = data.find(x => x.id === personId);
       if (!p) return null;
       

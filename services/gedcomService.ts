@@ -5,15 +5,19 @@ import { Person, Gender } from '../types';
  * It reads the line-based structure and converts INDI and FAM records into our Person graph.
  */
 export const parseGedcom = (content: string): Person[] => {
-  const lines = content.split(/\r?\n/);
+  // Remove BOM (Byte Order Mark) if present at the start of the string
+  const cleanContent = content.replace(/^\uFEFF/, '');
+  
+  const lines = cleanContent.split(/\r?\n/);
   const records: any[] = [];
   let currentRecord: any = null;
   const stack: any[] = [];
 
   // 1. Build a hierarchy of records
   lines.forEach((line) => {
-    // Regex slightly more permissive regarding spaces
-    const match = line.match(/^\s*(\d+)\s+(@\w+@|\w+)(\s+(.*))?$/);
+    // Regex updated to allow ID characters like '-' inside @...@ 
+    // Format: Level + Space + (ID OR TAG) + Optional Space + Value
+    const match = line.match(/^\s*(\d+)\s+(@[^@]+@|[A-Za-z0-9_]+)(\s+(.*))?$/);
     if (!match) return;
 
     const level = parseInt(match[1], 10);
@@ -23,10 +27,10 @@ export const parseGedcom = (content: string): Person[] => {
     let tag = tagOrId;
     let xref_id = undefined;
 
-    // Check if it's a definition like "0 @I1@ INDI"
+    // Check if it's a definition like "0 @I1@ INDI" or "0 @I-100@ INDI"
     if (tagOrId.startsWith('@')) {
       xref_id = tagOrId;
-      tag = match[4] ? match[4].trim() : ''; // The tag is actually in the value position usually
+      tag = match[4] ? match[4].trim() : ''; 
     }
 
     const newNode = { tag, value, xref_id, children: [] };
