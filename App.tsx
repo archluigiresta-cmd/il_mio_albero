@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Person, User, Gender } from './types';
-import { parseGedcom } from './services/gedcomService';
+import { parseGedcom, mergePeople } from './services/gedcomService';
 import { getStoredPeople, savePeople, getSession, loginUser, registerUser, logout, hardReset } from './services/storageService';
 import { FamilyTree } from './components/FamilyTree';
 import { PersonEditor } from './components/PersonEditor';
 import { AdminPanel } from './components/AdminPanel';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { Upload, Plus, TreeDeciduous, Shield, LogOut, LayoutDashboard, User as UserIcon } from 'lucide-react';
+import { Upload, Plus, TreeDeciduous, Shield, LogOut, LayoutDashboard, User as UserIcon, FilePlus } from 'lucide-react';
 
 const AppContent: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -54,9 +54,26 @@ const AppContent: React.FC = () => {
               try {
                 const parsed = parseGedcom(content);
                 if (parsed.length > 0) {
-                    if (confirm(`Trovate ${parsed.length} persone nel file. Vuoi importarle sostituendo i dati attuali?`)) {
+                    
+                    if (people.length === 0) {
+                        // Se l'albero è vuoto, importa direttamente
                         setPeople(parsed);
+                        alert(`Importate ${parsed.length} persone.`);
+                    } else {
+                        // Se ci sono già dati, chiedi cosa fare
+                        if (confirm(`Il file contiene ${parsed.length} persone.\n\nVuoi SOVRASCRIVERE l'albero esistente (OK) o UNIRE i dati (Annulla)?\n\nOK = Cancella tutto e sostituisci\nAnnulla = Cerca di unire i dati nuovi a quelli vecchi`)) {
+                            // Sovrascrivi
+                            setPeople(parsed);
+                        } else {
+                            // Unisci (Merge)
+                            if (confirm("Procedo con l'unione intelligente? I record con lo stesso nome e data di nascita verranno aggiornati, gli altri aggiunti.")) {
+                                const { merged, stats } = mergePeople(people, parsed);
+                                setPeople(merged);
+                                alert(`Unione completata!\nNuove persone aggiunte: ${stats.added}\nPersone aggiornate: ${stats.updated}`);
+                            }
+                        }
                     }
+
                 } else {
                     alert("Il file sembra vuoto o non valido.");
                 }
@@ -275,8 +292,8 @@ const AppContent: React.FC = () => {
                            {/* TOOLBAR ALBERO */}
                            <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
                                {user.role === 'admin' && (
-                                   <label className="bg-white p-3 rounded-full shadow-lg cursor-pointer text-slate-600 hover:text-emerald-600 transition hover:scale-105" title="Importa GEDCOM (Sovrascrive)">
-                                       <Upload size={20} />
+                                   <label className="bg-white p-3 rounded-full shadow-lg cursor-pointer text-slate-600 hover:text-emerald-600 transition hover:scale-105" title="Importa / Unisci GEDCOM">
+                                       <FilePlus size={20} />
                                        <input type="file" accept=".ged" onChange={handleFileUpload} className="hidden" />
                                    </label>
                                )}
