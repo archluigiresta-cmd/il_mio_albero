@@ -6,7 +6,9 @@ import {
   Search, 
   GitMerge,
   Filter,
-  Users
+  Users,
+  Maximize,
+  Minimize
 } from 'lucide-react';
 
 interface FamilyTreeProps {
@@ -37,6 +39,9 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
   const [filterMode, setFilterMode] = useState<FilterType>('all');
   
   const [rootId, setRootId] = useState<string | null>(null);
+  
+  // Modifica v1.5.1: Gestione espansione.
+  // Invece di partire vuoto, partirà pieno.
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   
   // Ricerca
@@ -58,7 +63,21 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Inizializzazione Root
+  // Funzione helper per espandere tutto
+  const expandAll = (personList: Person[]) => {
+      const allIds = new Set(personList.map(p => p.id));
+      setExpandedIds(allIds);
+  };
+
+  const collapseAll = () => {
+      if (rootId) {
+          setExpandedIds(new Set([rootId]));
+      } else {
+          setExpandedIds(new Set());
+      }
+  };
+
+  // Inizializzazione Root e Espansione Totale
   useEffect(() => {
       if (!rootId && data.length > 0) {
           // Seleziona il più anziano senza padre come root di default
@@ -68,9 +87,14 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
             : data[0];
           
           setRootId(bestRoot.id);
-          setExpandedIds(new Set([bestRoot.id]));
+          // DI DEFAULT: Espandi TUTTO l'albero ("spacchettato")
+          expandAll(data);
       }
-  }, [data, rootId]);
+      // Se i dati cambiano (es. importazione), espandiamo i nuovi nodi
+      if (data.length > expandedIds.size && rootId) {
+           expandAll(data);
+      }
+  }, [data, rootId]); // Rimosso expandedIds dalle dipendenze per evitare loop
 
   // Se cambio modalità filtro in nucleo, imposto la radice sulla persona selezionata (se c'è)
   useEffect(() => {
@@ -94,8 +118,8 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
 
   const toggleNode = (id: string) => {
       const next = new Set(expandedIds);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(id)) next.delete(id); // Comprimi
+      else next.add(id); // Espandi
       setExpandedIds(next);
   };
 
@@ -136,21 +160,15 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
           if (!p) return null;
 
           // Filtro Linea Diretta:
-          // Se siamo in modalità direct_line, includiamo il nodo SOLO se fa parte del percorso diretto 
-          // OPPURE se è un figlio diretto del target selezionato (per vedere i figli dell'ultimo nodo)
           if (filterMode === 'direct_line' && selectedPersonId) {
              const isAncestorPath = directLineIds.has(id);
-             // Se non è nel percorso antenati e il genitore non è la persona selezionata, salta
-             // Eccezione: Mostriamo sempre il root
              if (id !== rootId && !isAncestorPath) {
-                 // Controlliamo se è figlio del selezionato (per mostrare i figli finali)
                  const parentIsSelected = p.fatherId === selectedPersonId || p.motherId === selectedPersonId;
                  if (!parentIsSelected) return null; 
              }
           }
 
           // Filtro Nucleo Familiare:
-          // Limita profondità a 1 (Figli immediati)
           if (filterMode === 'nuclear' && depth > 1) {
               return null;
           }
@@ -162,8 +180,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
           }
 
           // Espansione nodi
-          // In modalità 'all', usa expandedIds.
-          // In modalità 'direct_line' o 'nuclear', espandi tutto automaticamente per chiarezza.
+          // Logica v1.5.1: Se filterMode è 'all', controlliamo expandedIds (che ora parte pieno).
           const isExpanded = filterMode !== 'all' ? true : (expandedIds.has(id) || depth === 0);
           const hasChildren = p.childrenIds.length > 0;
 
@@ -233,12 +250,13 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       const g = svg.append("g");
 
       const zoom = d3.zoom<SVGSVGElement, unknown>()
-          .scaleExtent([0.1, 2.5])
+          .scaleExtent([0.05, 2.5]) // Aumentato zoom out per alberi grandi
           .on("zoom", (e) => g.attr("transform", e.transform));
       
-      // Posizione iniziale ottimizzata in base alla view
+      // Posizione iniziale ottimizzata
       const initialY = viewMode === 'ancestors' ? height - 150 : 80;
-      svg.call(zoom).call(zoom.transform, d3.zoomIdentity.translate(width/2, initialY).scale(isMobile ? 0.6 : 0.85));
+      // Zoom iniziale leggermente più lontano per vedere più "spacchettato"
+      svg.call(zoom).call(zoom.transform, d3.zoomIdentity.translate(width/2, initialY).scale(isMobile ? 0.5 : 0.7));
 
       const root = d3.hierarchy<HierarchyNode>(treeData);
       
@@ -305,7 +323,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
              .on("click", (e) => {
                  e.stopPropagation();
                  onSelectPerson(p);
-                 // Se siamo in nuclear mode, un click cambia il centro del nucleo
                  if (filterMode === 'nuclear') {
                      setRootId(p.id);
                  }
@@ -356,7 +373,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
               drawPersonInfo(p, 0);
           }
 
-          // Expand Button (Only for 'all' mode)
+          // Expand/Collapse Button (Only for 'all' mode)
           if (filterMode === 'all' && viewMode === 'descendants' && p.childrenIds.length > 0) {
               const hasVisibleChildren = d.children && d.children.length > 0;
               const btnY = CARD_HEIGHT / 2;
@@ -368,6 +385,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                     toggleNode(p.id);
                 });
 
+              // Design bottone: ora il default è "Meno" (chiudi), perché è tutto aperto
               btnGroup.append("circle")
                 .attr("r", isMobile ? 8 : 10)
                 .attr("fill", hasVisibleChildren ? "#fff" : "#10b981")
@@ -375,8 +393,10 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 .attr("stroke-width", 1.5);
               
               if (hasVisibleChildren) {
+                 // Icona MENO (per chiudere)
                  btnGroup.append("path").attr("d", "M-3 0 H3").attr("stroke", "#64748b").attr("stroke-width", 2);
               } else {
+                 // Icona PIU (per riaprire)
                  btnGroup.append("path").attr("d", "M-3 0 H3 M0 -3 V3").attr("stroke", "white").attr("stroke-width", 2);
               }
           }
@@ -410,10 +430,10 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                              className="px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm border-b border-slate-50 last:border-0 flex justify-between items-center"
                              onClick={() => {
                                  setRootId(p.id);
-                                 setExpandedIds(new Set([p.id]));
+                                 // Non resetto expandedIds qui, così resta "tutto aperto"
                                  setShowSearch(false);
                                  setSearchText("");
-                                 onSelectPerson(p); // Seleziona anche per attivare filtri nucleo
+                                 onSelectPerson(p); 
                              }}
                           >
                               <span className="font-medium text-slate-700">{p.firstName} {p.lastName}</span>
@@ -447,7 +467,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
               {viewMode === 'descendants' && (
                   <div className="space-y-1">
                       <button 
-                        onClick={() => setFilterMode('all')}
+                        onClick={() => { setFilterMode('all'); expandAll(data); }}
                         className={`w-full text-left px-3 py-2 rounded text-xs font-medium flex items-center gap-2 ${filterMode === 'all' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:bg-slate-50'}`}
                       >
                           <GitMerge size={14} className="rotate-90" />
@@ -478,6 +498,27 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                   </div>
               )}
           </div>
+          
+          {/* Quick Expand/Collapse Tools */}
+           {viewMode === 'descendants' && filterMode === 'all' && (
+                <div className="flex gap-2 pointer-events-auto">
+                    <button 
+                        onClick={() => expandAll(data)} 
+                        className="bg-white p-2 rounded-lg shadow text-slate-600 hover:text-emerald-600 border border-slate-200"
+                        title="Espandi Tutto"
+                    >
+                        <Maximize size={16} />
+                    </button>
+                    <button 
+                        onClick={collapseAll} 
+                        className="bg-white p-2 rounded-lg shadow text-slate-600 hover:text-emerald-600 border border-slate-200"
+                        title="Comprimi Tutto"
+                    >
+                        <Minimize size={16} />
+                    </button>
+                </div>
+           )}
+
       </div>
 
       {/* BACK TO PARENT BUTTON */}

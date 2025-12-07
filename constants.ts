@@ -1,7 +1,7 @@
 // CONFIGURAZIONE APP
 // Nota per GitHub: In produzione, utilizzare variabili d'ambiente per proteggere le credenziali.
 
-export const APP_VERSION = '1.5.0';
+export const APP_VERSION = '1.5.1';
 
 // Credenziali Admin Hardcoded (come richiesto)
 export const ADMIN_EMAIL = (import.meta as any).env?.VITE_ADMIN_EMAIL || 'arch.luigiresta@gmail.com';
