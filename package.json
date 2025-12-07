@@ -1,6 +1,6 @@
 {
   "name": "genealogia-resta",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "private": true,
   "description": "Gestore albero genealogico con visualizzazione grafica e import GEDCOM",
   "type": "module",

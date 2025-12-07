@@ -7,7 +7,8 @@ import { PersonEditor } from './components/PersonEditor';
 import { AdminPanel } from './components/AdminPanel';
 import { DashboardSidebar } from './components/DashboardSidebar';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { Upload, TreeDeciduous, Shield, User as UserIcon, FilePlus, Save } from 'lucide-react';
+import { Upload, TreeDeciduous, Shield, User as UserIcon, FilePlus, Save, RefreshCw } from 'lucide-react';
+import { APP_VERSION } from './constants';
 
 const AppContent: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -157,7 +158,13 @@ const AppContent: React.FC = () => {
 
       return (
           <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-slate-800 to-slate-900 p-4 font-sans text-slate-100">
-              <div className="bg-white text-slate-800 p-8 rounded-xl shadow-2xl w-full max-w-sm border border-slate-700">
+              <div className="bg-white text-slate-800 p-8 rounded-xl shadow-2xl w-full max-w-sm border border-slate-700 relative overflow-hidden">
+                  
+                  {/* Badge Versione */}
+                  <div className="absolute top-2 right-2 text-[10px] text-slate-400 font-mono">
+                      v{APP_VERSION}
+                  </div>
+
                   <div className="flex justify-center mb-6">
                       <div className="p-4 bg-emerald-600 rounded-xl shadow-lg transform -translate-y-12">
                         <TreeDeciduous size={48} className="text-white" />
@@ -213,8 +220,19 @@ const AppContent: React.FC = () => {
                       </button>
                   </div>
               </div>
-              <div className="mt-8 text-xs text-slate-500 opacity-60">
-                  Sistema di archiviazione genealogica privata
+              
+              {/* Footer e Reset */}
+              <div className="mt-8 flex flex-col items-center gap-2">
+                  <div className="text-xs text-slate-500 opacity-60">
+                      Sistema di archiviazione genealogica privata
+                  </div>
+                  <button 
+                    onClick={() => { if(confirm("Questo cancellerà tutti i dati locali per risolvere problemi di accesso. Continuare?")) hardReset(); }} 
+                    className="flex items-center gap-1 text-[10px] text-red-400 hover:text-red-300 opacity-50 hover:opacity-100 transition"
+                  >
+                      <RefreshCw size={10} />
+                      Problemi di accesso? Resetta dati locali
+                  </button>
               </div>
           </div>
       );

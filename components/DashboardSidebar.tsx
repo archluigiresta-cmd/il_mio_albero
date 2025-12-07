@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { User } from '../types';
 import { getStoredUsers } from '../services/storageService';
+import { APP_VERSION } from '../constants';
 import { 
   Network, 
   UserPlus, 
@@ -152,7 +153,7 @@ export const DashboardSidebar: React.FC<SidebarProps> = ({ user, currentView, on
             Disconnetti
             </button>
             <div className="mt-4 text-center text-[10px] text-slate-600">
-                v1.4.1 &bull; Famiglia Resta
+                v{APP_VERSION} &bull; Famiglia Resta
             </div>
         </div>
       </div>
