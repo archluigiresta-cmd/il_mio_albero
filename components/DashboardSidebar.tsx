@@ -95,7 +95,7 @@ export const DashboardSidebar: React.FC<SidebarProps> = ({ user, currentView, on
             <TreeDeciduous size={24} className="text-white" />
             </div>
             <div>
-            <h1 className="font-serif font-bold text-lg tracking-wide">Casa Resta</h1>
+            <h1 className="font-serif font-bold text-lg tracking-wide">il mio Albero</h1>
             <p className="text-[10px] text-slate-400 uppercase tracking-wider">Genealogia</p>
             </div>
         </div>
@@ -153,7 +153,7 @@ export const DashboardSidebar: React.FC<SidebarProps> = ({ user, currentView, on
             Disconnetti
             </button>
             <div className="mt-4 text-center text-[10px] text-slate-600">
-                v{APP_VERSION} &bull; Famiglia Resta
+                v{APP_VERSION} &bull; il mio Albero
             </div>
         </div>
       </div>

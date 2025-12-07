@@ -8,7 +8,7 @@ import { AdminPanel } from './components/AdminPanel';
 import { DashboardSidebar } from './components/DashboardSidebar';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Upload, TreeDeciduous, Shield, User as UserIcon, FilePlus, Save, RefreshCw } from 'lucide-react';
-import { APP_VERSION } from './constants';
+import { APP_VERSION, APP_NAME } from './constants';
 
 const AppContent: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -172,7 +172,7 @@ const AppContent: React.FC = () => {
                   </div>
                   <div className="-mt-8 text-center mb-8">
                       <h1 className="text-2xl font-serif font-bold text-slate-900">
-                          Genealogia Resta
+                          {APP_NAME}
                       </h1>
                       <p className="text-slate-500 text-sm mt-1">
                           Accesso Riservato

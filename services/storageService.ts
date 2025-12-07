@@ -1,5 +1,6 @@
 import { Person, Gender, User } from '../types';
 import { ADMIN_EMAIL, ADMIN_PASSWORD } from '../constants';
+import { INITIAL_PEOPLE, INITIAL_USERS } from './initialData';
 
 const KEY_DATA = 'genealogy_data_v1';
 const KEY_USERS = 'genealogy_users_v1';
@@ -33,16 +34,32 @@ const sanitizePerson = (p: any): Person => {
 export const getStoredPeople = (): Person[] => {
   try {
     const data = localStorage.getItem(KEY_DATA);
-    if (!data) return [];
+    
+    // MODIFICA CRUCIALE: Se non ci sono dati locali, carica quelli condivisi (INITIAL_PEOPLE)
+    if (!data) {
+        // Salviamo subito i dati iniziali nel locale per permettere modifiche future
+        savePeople(INITIAL_PEOPLE);
+        return INITIAL_PEOPLE;
+    }
     
     const parsed = JSON.parse(data);
-    if (!Array.isArray(parsed)) return [];
+    
+    // Se l'array locale è vuoto (magari per un reset precedente), ricarichiamo i dati iniziali
+    // Nota: Rimuovi questo controllo se vuoi permettere un albero veramente vuoto
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+         if (INITIAL_PEOPLE.length > 0) {
+             savePeople(INITIAL_PEOPLE);
+             return INITIAL_PEOPLE;
+         }
+         return [];
+    }
 
     return parsed.map(sanitizePerson);
 
   } catch (e) {
     console.error("Errore lettura dati:", e);
-    return [];
+    // Fallback in caso di errore
+    return INITIAL_PEOPLE;
   }
 };
 
@@ -66,7 +83,14 @@ export const hardReset = () => {
 export const getStoredUsers = (): User[] => {
   try {
     const data = localStorage.getItem(KEY_USERS);
-    if (!data) return [];
+    if (!data) {
+        // Carica utenti iniziali se presenti
+        if (INITIAL_USERS.length > 0) {
+            saveUsers(INITIAL_USERS);
+            return INITIAL_USERS;
+        }
+        return [];
+    }
     
     const parsed = JSON.parse(data);
     if (!Array.isArray(parsed)) return [];
