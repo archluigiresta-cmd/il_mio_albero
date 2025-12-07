@@ -29,6 +29,9 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   
+  // Stato per le dimensioni del container (per responsive design)
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  
   const [viewMode, setViewMode] = useState<ViewType>('descendants');
   const [rootId, setRootId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -38,10 +41,27 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
   const [searchResults, setSearchResults] = useState<Person[]>([]);
   const [showSearch, setShowSearch] = useState(false);
 
+  // Gestione Resize per adattamento mobile
+  useEffect(() => {
+    const handleResize = () => {
+        if (wrapperRef.current) {
+            setDimensions({
+                width: wrapperRef.current.clientWidth,
+                height: wrapperRef.current.clientHeight
+            });
+        }
+    };
+    
+    // Initial size
+    handleResize();
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   // Inizializzazione Root
   useEffect(() => {
       if (!rootId && data.length > 0) {
-          // Trova il capostipite ideale (senza padre)
           const roots = data.filter(p => !p.fatherId);
           const bestRoot = roots.length > 0 
             ? roots.sort((a, b) => (a.birthDate || '9999').localeCompare(b.birthDate || '9999'))[0] 
@@ -140,12 +160,23 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
 
   // --- RENDERING D3 ---
   useEffect(() => {
-      if (!treeData || !svgRef.current || !wrapperRef.current) return;
+      if (!treeData || !svgRef.current || !dimensions.width) return;
 
-      const width = wrapperRef.current.clientWidth;
-      const height = wrapperRef.current.clientHeight;
+      const { width, height } = dimensions;
 
-      // Pulizia
+      // --- LOGICA RESPONSIVE ---
+      const isMobile = width < 640; // Breakpoint per smartphone
+      
+      const CARD_WIDTH = isMobile ? 140 : 200;
+      const CARD_HEIGHT = isMobile ? 60 : 70;
+      const FONT_SIZE_NAME = isMobile ? "12px" : "14px";
+      const FONT_SIZE_DATE = isMobile ? "9px" : "10px";
+      
+      // Spaziature
+      const H_GAP = isMobile ? 15 : 25;
+      const V_GAP = isMobile ? 80 : 100;
+
+      // Pulizia SVG
       const svg = d3.select(svgRef.current);
       svg.selectAll("*").remove();
 
@@ -156,30 +187,24 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
           .on("zoom", (e) => g.attr("transform", e.transform));
       
       const initialY = viewMode === 'ancestors' ? height - 150 : 80;
-      svg.call(zoom).call(zoom.transform, d3.zoomIdentity.translate(width/2, initialY).scale(0.8));
-
-      // Configurazione Layout
-      const CARD_WIDTH = 200;
-      const CARD_HEIGHT = 70;
-      const H_GAP = 20; // Ridotto per compattare
-      const V_GAP = 100;
+      svg.call(zoom).call(zoom.transform, d3.zoomIdentity.translate(width/2, initialY).scale(isMobile ? 0.6 : 0.85));
 
       const root = d3.hierarchy<HierarchyNode>(treeData);
       
       const treeLayout = d3.tree<HierarchyNode>()
           .nodeSize([CARD_WIDTH + H_GAP, CARD_HEIGHT + V_GAP])
-          .separation((a, b) => a.parent === b.parent ? 1.05 : 1.15); // Ridotta separazione per alberi larghi
+          .separation((a, b) => a.parent === b.parent ? 1.05 : 1.15);
 
       treeLayout(root);
 
-      // --- DISEGNO CONNESSIONI (LINKS) ---
+      // --- DISEGNO CONNESSIONI SQUADRATE ---
       g.selectAll(".link")
         .data(root.links())
         .enter()
         .append("path")
         .attr("class", "link")
         .attr("fill", "none")
-        .attr("stroke", "#64748b")
+        .attr("stroke", "#94a3b8")
         .attr("stroke-width", 1.5)
         .attr("d", (d) => {
             const sx = d.source.x;
@@ -192,7 +217,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 const midY = (sy + ty) / 2;
                 return `M${sx},${sy - CARD_HEIGHT/2} V${midY} H${tx} V${ty + CARD_HEIGHT/2}`;
             } else {
-                // Top-Down (Standard)
+                // Top-Down
                 const midY = (sy + ty) / 2;
                 return `M${sx},${sy + CARD_HEIGHT/2} V${midY} H${tx} V${ty - CARD_HEIGHT/2}`;
             }
@@ -211,73 +236,73 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
           const p = d.data.person;
           const s = d.data.spouse;
           
-          // Determina se mostrare la coppia
           const showSpouse = !!s && viewMode !== 'ancestors';
-          const boxWidth = showSpouse ? CARD_WIDTH + 140 : CARD_WIDTH;
+          // Se mostriamo il coniuge, la larghezza raddoppia quasi
+          const totalWidth = showSpouse ? (CARD_WIDTH * 2) + 20 : CARD_WIDTH;
           
-          // Rettangolo Base
+          // Ombra e Box
           gNode.append("rect")
-             .attr("x", -boxWidth / 2)
+             .attr("x", -totalWidth / 2)
              .attr("y", -CARD_HEIGHT / 2)
-             .attr("width", boxWidth)
+             .attr("width", totalWidth)
              .attr("height", CARD_HEIGHT)
              .attr("rx", 6)
              .attr("fill", "white")
              .attr("stroke", p.id === selectedPersonId ? "#059669" : "#cbd5e1")
              .attr("stroke-width", p.id === selectedPersonId ? 3 : 1)
-             .style("filter", "drop-shadow(0 2px 4px rgba(0,0,0,0.05))")
+             .style("filter", "drop-shadow(0 2px 3px rgba(0,0,0,0.08))")
              .style("cursor", "pointer")
              .on("click", (e) => {
                  e.stopPropagation();
                  onSelectPerson(p);
              });
 
-          // Funzione helper per disegnare testo
-          const drawText = (person: Person, offsetX: number) => {
+          // Helper Rendering Testo
+          const drawPersonInfo = (person: Person, centerX: number) => {
              // Nome
              gNode.append("text")
-                .attr("x", offsetX)
-                .attr("y", -10)
+                .attr("x", centerX)
+                .attr("y", -CARD_HEIGHT/2 + (isMobile ? 22 : 25))
                 .attr("text-anchor", "middle")
                 .style("font-weight", "600")
                 .style("font-family", "Inter, sans-serif")
-                .style("font-size", "14px")
+                .style("font-size", FONT_SIZE_NAME)
                 .style("fill", "#1e293b")
                 .text(person.firstName);
             
              // Cognome
              gNode.append("text")
-                .attr("x", offsetX)
-                .attr("y", 8)
+                .attr("x", centerX)
+                .attr("y", -CARD_HEIGHT/2 + (isMobile ? 36 : 42))
                 .attr("text-anchor", "middle")
                 .style("font-family", "Inter, sans-serif")
-                .style("font-size", "14px")
+                .style("font-size", FONT_SIZE_NAME)
                 .style("fill", "#1e293b")
                 .text(person.lastName);
 
-             // Date
+             // Anno
              gNode.append("text")
-                .attr("x", offsetX)
-                .attr("y", 24)
+                .attr("x", centerX)
+                .attr("y", CARD_HEIGHT/2 - (isMobile ? 8 : 10))
                 .attr("text-anchor", "middle")
-                .style("font-size", "10px")
+                .style("font-size", FONT_SIZE_DATE)
                 .style("fill", "#94a3b8")
-                .text(person.birthDate ? person.birthDate.split(' ').pop() : ''); // Solo anno approssimativo per pulizia
+                .text(person.birthDate ? person.birthDate.split(' ').pop() : '');
 
-             // Indicatore Genere
+             // Dot Genere
              gNode.append("circle")
-                .attr("cx", offsetX - 35)
-                .attr("cy", -20)
-                .attr("r", 3)
+                .attr("cx", centerX - (isMobile ? 40 : 60))
+                .attr("cy", -CARD_HEIGHT/2 + 12)
+                .attr("r", isMobile ? 3 : 4)
                 .attr("fill", person.gender === Gender.Male ? "#3b82f6" : "#ec4899");
           };
 
           if (showSpouse) {
-              // Disegna Persona a sinistra e Coniuge a destra
-              drawText(p, -boxWidth / 4);
-              drawText(s, boxWidth / 4);
+              // Layout a Coppia
+              drawPersonInfo(p, -totalWidth/4);
+              drawPersonInfo(s, totalWidth/4);
 
-              // Linea divisoria
+              // Linea divisoria verticale
               gNode.append("line")
                  .attr("x1", 0)
                  .attr("y1", -CARD_HEIGHT/2 + 10)
@@ -286,21 +311,19 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                  .attr("stroke", "#e2e8f0");
               
               // Simbolo '&'
-              gNode.append("circle").attr("r", 10).attr("fill", "white").attr("cy", 0);
-              gNode.append("text").attr("y", 4).attr("text-anchor", "middle").style("font-size", "10px").style("fill", "#94a3b8").text("&");
+              gNode.append("circle").attr("r", isMobile ? 8 : 10).attr("fill", "white").attr("cy", 0);
+              gNode.append("text").attr("y", isMobile ? 3 : 4).attr("text-anchor", "middle").style("font-size", "10px").style("fill", "#94a3b8").text("&");
 
           } else {
-              drawText(p, 0);
+              // Layout Singolo
+              drawPersonInfo(p, 0);
           }
 
-          // Pulsante Expand/Collapse
+          // Pulsante Espandi/Collassa
           if (viewMode === 'descendants' && p.childrenIds.length > 0) {
-              const isCollapsed = d.data.hasHiddenChildren;
               const hasVisibleChildren = d.children && d.children.length > 0;
               
-              // Disegna il bottone solo se ha senso (ha figli reali)
               const btnY = CARD_HEIGHT / 2;
-              
               const btnGroup = gNode.append("g")
                 .attr("transform", `translate(0, ${btnY})`)
                 .style("cursor", "pointer")
@@ -310,34 +333,29 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 });
 
               btnGroup.append("circle")
-                .attr("r", 9)
-                .attr("fill", "white")
-                .attr("stroke", "#64748b")
-                .attr("stroke-width", 1);
+                .attr("r", isMobile ? 8 : 10)
+                .attr("fill", hasVisibleChildren ? "#fff" : "#10b981")
+                .attr("stroke", hasVisibleChildren ? "#cbd5e1" : "#059669")
+                .attr("stroke-width", 1.5);
               
-              // Icona
               if (hasVisibleChildren) {
-                 btnGroup.append("path").attr("d", "M-4 0 H4").attr("stroke", "#64748b").attr("stroke-width", 1.5);
+                 btnGroup.append("path").attr("d", "M-3 0 H3").attr("stroke", "#64748b").attr("stroke-width", 2);
               } else {
-                 btnGroup.append("path").attr("d", "M-4 0 H4 M0 -4 V4").attr("stroke", "#059669").attr("stroke-width", 1.5);
-                 // Se collassato, evidenzia il bordo del cerchio
-                 btnGroup.select("circle").attr("stroke", "#059669");
+                 btnGroup.append("path").attr("d", "M-3 0 H3 M0 -3 V3").attr("stroke", "white").attr("stroke-width", 2);
               }
           }
       });
 
-  }, [treeData, viewMode, selectedPersonId]);
+  }, [treeData, viewMode, selectedPersonId, dimensions]); // Rerender on dimension change
 
-
-  // --- UI LAYOUT ---
   return (
     <div ref={wrapperRef} className="w-full h-full bg-slate-50 relative overflow-hidden font-sans">
       
       {/* HEADER DI NAVIGAZIONE */}
       <div className="absolute top-4 left-4 z-20 w-full max-w-xs flex flex-col gap-2 pointer-events-none">
           
-          {/* SEARCH (Pointer events auto per interagire) */}
-          <div className="bg-white rounded-lg shadow-sm border border-slate-200 pointer-events-auto">
+          {/* SEARCH */}
+          <div className="bg-white rounded-lg shadow-md border border-slate-200 pointer-events-auto">
               <div className="flex items-center px-3 py-2">
                   <Search size={16} className="text-slate-400 mr-2" />
                   <input 
@@ -349,7 +367,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                   />
               </div>
               {showSearch && searchResults.length > 0 && (
-                  <div className="border-t border-slate-100 max-h-48 overflow-y-auto">
+                  <div className="border-t border-slate-100 max-h-48 overflow-y-auto bg-white rounded-b-lg">
                       {searchResults.map(p => (
                           <div 
                              key={p.id}
@@ -373,14 +391,16 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
           <div className="flex bg-white rounded-lg shadow-sm border border-slate-200 p-1 pointer-events-auto">
               <button 
                 onClick={() => setViewMode('descendants')}
-                className={`flex-1 py-1.5 px-3 rounded text-xs font-bold transition ${viewMode === 'descendants' ? 'bg-emerald-100 text-emerald-800' : 'text-slate-500 hover:bg-slate-50'}`}
+                className={`flex-1 py-2 px-3 rounded text-xs font-bold transition ${viewMode === 'descendants' ? 'bg-emerald-100 text-emerald-800' : 'text-slate-500 hover:bg-slate-50'}`}
               >
+                 <GitMerge size={14} className="inline mr-1 rotate-180" />
                  Discendenti
               </button>
               <button 
                 onClick={() => setViewMode('ancestors')}
-                className={`flex-1 py-1.5 px-3 rounded text-xs font-bold transition ${viewMode === 'ancestors' ? 'bg-emerald-100 text-emerald-800' : 'text-slate-500 hover:bg-slate-50'}`}
+                className={`flex-1 py-2 px-3 rounded text-xs font-bold transition ${viewMode === 'ancestors' ? 'bg-emerald-100 text-emerald-800' : 'text-slate-500 hover:bg-slate-50'}`}
               >
+                 <GitMerge size={14} className="inline mr-1" />
                  Antenati
               </button>
           </div>
@@ -388,13 +408,13 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
 
       {/* SALI AL GENITORE */}
       {viewMode === 'descendants' && data.find(p => p.id === rootId)?.fatherId && (
-          <div className="absolute top-20 left-1/2 -translate-x-1/2 z-10 animate-bounce pointer-events-auto">
+          <div className="absolute top-24 left-1/2 -translate-x-1/2 z-10 pointer-events-auto">
               <button 
                 onClick={goUpToParent}
-                className="flex items-center gap-2 bg-white px-4 py-2 rounded-full shadow-lg border border-emerald-200 text-emerald-700 text-xs font-bold hover:bg-emerald-50 transition"
+                className="flex items-center gap-2 bg-white/90 backdrop-blur px-4 py-2 rounded-full shadow-lg border border-emerald-200 text-emerald-700 text-xs font-bold hover:bg-emerald-50 transition animate-bounce"
               >
                   <ArrowUp size={14} />
-                  Sali di livello
+                  Sali
               </button>
           </div>
       )}

@@ -152,7 +152,7 @@ export const DashboardSidebar: React.FC<SidebarProps> = ({ user, currentView, on
             Disconnetti
             </button>
             <div className="mt-4 text-center text-[10px] text-slate-600">
-                v1.3.1 &bull; Famiglia Resta
+                v1.4.0 &bull; Famiglia Resta
             </div>
         </div>
       </div>
