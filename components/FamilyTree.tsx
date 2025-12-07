@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { Person, Gender } from '../types';
-import { Network, GitGraph, Search, ArrowDown } from 'lucide-react';
+import { Network, GitGraph, Search, ArrowDown, ZoomIn, Crosshair, RotateCcw, Maximize } from 'lucide-react';
 
 interface FamilyTreeProps {
   data: Person[];
@@ -13,26 +13,36 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [viewMode, setViewMode] = useState<'network' | 'tree'>('tree');
-  const [focusId, setFocusId] = useState<string | null>(null);
+  
+  // State per gestire la radice visuale corrente (Totale vs Parziale)
+  const [visualRootId, setVisualRootId] = useState<string | null>(null);
+  const [historyIds, setHistoryIds] = useState<string[]>([]); // Per tornare indietro passo passo se necessario
 
-  // Imposta un focus iniziale (Capostipite)
-  useEffect(() => {
-    if (data.length > 0 && !focusId) {
-        // Cerca qualcuno che non ha padre né madre nel dataset (Capostipite)
-        // Oppure qualcuno con il maggior numero di discendenti
-        const potentialRoot = data.find(p => !data.some(d => d.id === p.fatherId) && !data.some(d => d.id === p.motherId));
-        
-        if (potentialRoot) {
-            setFocusId(potentialRoot.id);
-        } else {
-            // Fallback: il nodo con più figli
-            const root = data.reduce((prev, current) => 
-                (current.childrenIds.length > prev.childrenIds.length) ? current : prev
-            , data[0]);
-            setFocusId(root.id);
-        }
-    }
-  }, [data, focusId]);
+  // Trova il capostipite assoluto (o il migliore candidato)
+  const findAbsoluteRoot = (people: Person[]) => {
+      if (!people || people.length === 0) return null;
+      // Cerca qualcuno senza genitori nel dataset
+      const root = people.find(p => 
+          !people.some(d => d.id === p.fatherId) && 
+          !people.some(d => d.id === p.motherId)
+      );
+      // Fallback: nodo con più discendenti diretti
+      if (!root) {
+          return people.reduce((prev, current) => 
+            (current.childrenIds.length > prev.childrenIds.length) ? current : prev
+          , people[0]);
+      }
+      return root;
+  };
+
+  const handleSetFocus = (id: string) => {
+      setVisualRootId(id);
+      // Opzionale: scroll up o reset zoom se necessario, ma D3 lo gestirà
+  };
+
+  const handleResetFocus = () => {
+      setVisualRootId(null);
+  };
 
   useEffect(() => {
     if (!data || data.length === 0 || !svgRef.current || !wrapperRef.current) return;
@@ -40,20 +50,20 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove(); 
     
-    const width = wrapperRef.current.clientWidth || 800;
-    const height = wrapperRef.current.clientHeight || 600;
+    const width = wrapperRef.current.clientWidth || 1000;
+    const height = wrapperRef.current.clientHeight || 800;
 
     const g = svg.append("g");
     
     const zoom = d3.zoom()
-        .scaleExtent([0.1, 3])
+        .scaleExtent([0.1, 4])
         .on("zoom", (event) => g.attr("transform", event.transform));
 
     svg.call(zoom as any);
 
     if (viewMode === 'network') {
         // --- VISTA RETE (FORCE) ---
-        // Utile per vedere gruppi scollegati
+        // (Invariata per compatibilità, utile per debug relazioni)
         const nodes = data.map(d => ({ ...d }));
         const links: any[] = [];
 
@@ -70,7 +80,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
             .force("link", d3.forceLink(links).id((d: any) => d.id).distance(100))
             .force("charge", d3.forceManyBody().strength(-400))
             .force("center", d3.forceCenter(width / 2, height / 2))
-            .force("collide", d3.forceCollide(50));
+            .force("collide", d3.forceCollide(60));
 
         const link = g.append("g").selectAll("line")
             .data(links).enter().append("line")
@@ -91,8 +101,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
             .text((d: any) => d.firstName)
             .attr("text-anchor", "middle")
             .attr("dy", 4)
-            .style("font-size", "10px")
-            .style("pointer-events", "none");
+            .style("font-size", "10px");
 
         simulation.on("tick", () => {
             link.attr("x1", (d: any) => d.source.x).attr("y1", (d: any) => d.source.y)
@@ -105,16 +114,28 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
         function dragended(event: any, d: any) { if (!event.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }
 
     } else {
-        // --- VISTA ALBERO VERTICALE (GERARCHICO) ---
+        // --- VISTA ALBERO PROFESSIONALE (Schematico Ortogonale) ---
         
+        // 1. Determina la radice corrente
+        let rootPerson = visualRootId ? data.find(p => p.id === visualRootId) : findAbsoluteRoot(data);
+        if (!rootPerson && data.length > 0) rootPerson = data[0];
+
+        // 2. Costruisci la gerarchia ricorsiva
         const buildNode = (id: string, depth: number): any => {
-            if (depth > 50) return null; // Safety break
+            if (depth > 50) return null; // Break loop
             const p = data.find(x => x.id === id);
             if (!p) return null;
 
+            // Raccogli i figli
+            // Nota: Ordiniamo per data di nascita se possibile per coerenza visuale
             const childrenNodes = p.childrenIds
                 .map(cid => buildNode(cid, depth + 1))
-                .filter(c => c !== null);
+                .filter(c => c !== null)
+                .sort((a, b) => {
+                    const dateA = a.data.birthDate || "9999";
+                    const dateB = b.data.birthDate || "9999";
+                    return dateA.localeCompare(dateB);
+                });
 
             return {
                 name: `${p.firstName} ${p.lastName}`,
@@ -123,42 +144,52 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
             };
         };
 
-        const hierarchyData = buildNode(focusId || data[0]?.id, 0);
+        const hierarchyData = rootPerson ? buildNode(rootPerson.id, 0) : null;
         
         if (hierarchyData) {
             const root = d3.hierarchy(hierarchyData);
             
-            // Configurazione Dimensioni Verticali
-            const nodeWidth = 200;
-            const nodeHeight = 80;
-            const verticalGap = 100;
+            // Configurazione Dimensioni
+            const nodeWidth = 220;
+            const nodeHeight = 70;
+            const horizontalSpacing = 40;
+            const verticalSpacing = 120; // Aumentato per le linee ortogonali
             
-            // nodeSize([width, height]) -> x (orizzontale), y (verticale)
-            const treeLayout = d3.tree().nodeSize([nodeWidth + 20, nodeHeight + verticalGap]);
+            const treeLayout = d3.tree()
+                .nodeSize([nodeWidth + horizontalSpacing, nodeHeight + verticalSpacing]);
             
             treeLayout(root);
 
-            // Centra l'albero in alto
-            const initialTransform = d3.zoomIdentity.translate(width/2, 80).scale(0.85);
+            // Centra l'albero inizialmente
+            const initialTransform = d3.zoomIdentity.translate(width/2, 100).scale(0.8);
             svg.call(zoom.transform as any, initialTransform);
 
             const gTree = g.append("g");
 
-            // Links (Linee curve verticali)
+            // --- DISEGNO LINK ORTOGONALI (Angolo Retto) ---
             gTree.selectAll(".link")
                 .data(root.links())
                 .enter()
                 .append("path")
                 .attr("class", "link")
                 .attr("fill", "none")
-                .attr("stroke", "#94a3b8")
+                .attr("stroke", "#64748b") // Slate-500
                 .attr("stroke-width", 1.5)
-                .attr("d", d3.linkVertical()
-                    .x((d: any) => d.x)
-                    .y((d: any) => d.y) as any
-                );
+                .attr("d", (d: any) => {
+                    // Logica percorso: Start(Bottom Middle) -> Giù a metà -> Orizzontale -> Giù a Top Target
+                    const sourceX = d.source.x;
+                    const sourceY = d.source.y + nodeHeight / 2; // Parte dal fondo del genitore
+                    const targetX = d.target.x;
+                    const targetY = d.target.y - nodeHeight / 2; // Arriva in cima al figlio
+                    const midY = (sourceY + targetY) / 2;
 
-            // Nodes (Rettangoli)
+                    return `M${sourceX},${sourceY} 
+                            V${midY} 
+                            H${targetX} 
+                            V${targetY}`;
+                });
+
+            // --- DISEGNO NODI ---
             const node = gTree.selectAll(".node")
                 .data(root.descendants())
                 .enter()
@@ -168,76 +199,114 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 .style("cursor", "pointer")
                 .on("click", (event, d: any) => {
                     event.stopPropagation();
+                    // Seleziona per la sidebar
                     onSelectPerson(d.data.data);
                 });
 
-            // Card Rettangolare
+            // Box Rettangolare (Stile Schematico)
             node.append("rect")
                 .attr("width", nodeWidth)
                 .attr("height", nodeHeight)
                 .attr("x", -nodeWidth / 2)
                 .attr("y", -nodeHeight / 2)
-                .attr("rx", 4)
+                .attr("rx", 0) // Spigoli vivi per look tecnico, o poco smussati
+                .attr("ry", 0)
                 .attr("fill", "#ffffff")
+                // Bordo colorato in base al sesso, più scuro se selezionato
                 .attr("stroke", (d: any) => {
-                    if (d.data.data.id === selectedPersonId) return "#2563eb"; // Selected Blue
-                    return d.data.data.gender === Gender.Male ? "#93c5fd" : (d.data.data.gender === Gender.Female ? "#f9a8d4" : "#cbd5e1");
+                    if (d.data.data.id === selectedPersonId) return "#000000";
+                    return d.data.data.gender === Gender.Male ? "#3b82f6" : (d.data.data.gender === Gender.Female ? "#ec4899" : "#94a3b8");
                 })
-                .attr("stroke-width", (d: any) => d.data.data.id === selectedPersonId ? 3 : 1)
-                .attr("filter", "drop-shadow(0px 2px 3px rgba(0,0,0,0.1))");
+                .attr("stroke-width", (d: any) => d.data.data.id === selectedPersonId ? 2 : 1)
+                // Ombra leggera
+                .attr("filter", "drop-shadow(2px 2px 2px rgba(0,0,0,0.05))");
 
-            // Nome
+            // Indicatore laterale colorato (Banda sinistra)
+            node.append("rect")
+                .attr("width", 4)
+                .attr("height", nodeHeight)
+                .attr("x", -nodeWidth / 2)
+                .attr("y", -nodeHeight / 2)
+                .attr("fill", (d: any) => d.data.data.gender === Gender.Male ? "#3b82f6" : (d.data.data.gender === Gender.Female ? "#ec4899" : "#94a3b8"));
+
+            // Nome Persona
             node.append("text")
                 .attr("dy", -5)
-                .attr("text-anchor", "middle")
-                .style("font-weight", "bold")
+                .attr("x", -nodeWidth / 2 + 15) // Allineato a sinistra
+                .attr("text-anchor", "start")
+                .style("font-weight", "600")
                 .style("font-family", "sans-serif")
-                .style("font-size", "14px")
+                .style("font-size", "13px")
                 .style("fill", "#1e293b")
-                .text((d: any) => d.data.name);
+                .text((d: any) => {
+                    // Tronca se troppo lungo
+                    const name = d.data.name;
+                    return name.length > 25 ? name.substring(0, 22) + '...' : name;
+                });
             
-            // Dati (Nascita - Morte)
+            // Dati Date
             node.append("text")
-                .attr("dy", 15)
-                .attr("text-anchor", "middle")
+                .attr("dy", 12)
+                .attr("x", -nodeWidth / 2 + 15)
+                .attr("text-anchor", "start")
                 .style("font-size", "11px")
                 .style("fill", "#64748b")
                 .text((d: any) => {
-                    const b = d.data.data.birthDate || '?';
-                    const dth = d.data.data.deathDate || (d.data.data.isLiving ? '' : '?');
+                    const b = d.data.data.birthDate || '';
+                    const dth = d.data.data.deathDate || (d.data.data.isLiving ? '' : '†');
+                    if (!b && !dth) return '';
                     return `${b} - ${dth}`;
                 });
+
+            // --- PULSANTI AZIONE SUL NODO ---
             
-            // Icona Coniuge (se presente)
+            // 1. FOCUS BUTTON (Mirino)
+            // Mostra solo se il nodo ha figli (ha senso fare focus per vedere i discendenti) o se non siamo già sulla radice visuale
+            node.each(function(d: any) {
+                // Posizione in basso a destra del nodo
+                const btnGroup = d3.select(this).append("g")
+                    .attr("transform", `translate(${nodeWidth/2 - 25}, ${nodeHeight/2 - 25})`)
+                    .style("cursor", "pointer")
+                    .on("click", (e) => {
+                        e.stopPropagation();
+                        handleSetFocus(d.data.data.id);
+                    });
+
+                // Sfondo bottone
+                btnGroup.append("rect")
+                    .attr("width", 24)
+                    .attr("height", 24)
+                    .attr("rx", 4)
+                    .attr("fill", "#f1f5f9")
+                    .attr("stroke", "#cbd5e1");
+
+                // Icona Focus (Cerchio e mirino stilizzato)
+                btnGroup.append("circle").attr("cx", 12).attr("cy", 12).attr("r", 6).attr("stroke", "#475569").attr("fill", "none");
+                btnGroup.append("line").attr("x1", 12).attr("y1", 4).attr("x2", 12).attr("y2", 7).attr("stroke", "#475569");
+                btnGroup.append("line").attr("x1", 12).attr("y1", 17).attr("x2", 12).attr("y2", 20).attr("stroke", "#475569");
+                btnGroup.append("line").attr("x1", 4).attr("y1", 12).attr("x2", 7).attr("y2", 12).attr("stroke", "#475569");
+                btnGroup.append("line").attr("x1", 17).attr("y1", 12).attr("x2", 20).attr("y2", 12).attr("stroke", "#475569");
+                
+                // Tooltip
+                btnGroup.append("title").text("Focalizza vista su questo ramo");
+            });
+
+            // Icona Coniuge (Se presente)
             node.each(function(d: any) {
                 if (d.data.data.spouseIds && d.data.data.spouseIds.length > 0) {
                      d3.select(this).append("text")
-                        .attr("dy", 30)
-                        .attr("text-anchor", "middle")
-                        .style("font-size", "10px")
+                        .attr("dx", nodeWidth/2 - 10)
+                        .attr("dy", -nodeHeight/2 + 15)
+                        .attr("text-anchor", "end")
+                        .style("font-size", "12px")
                         .style("fill", "#ef4444")
                         .text("❤");
                 }
             });
-
-            // Bottone "Rendi Radice" (sopra il box)
-            const btn = node.append("g")
-                .attr("transform", `translate(${nodeWidth/2 - 20}, ${-nodeHeight/2 - 10})`)
-                .on("click", (e, d: any) => {
-                    e.stopPropagation();
-                    setFocusId(d.data.data.id);
-                });
-            btn.append("rect").attr("width", 20).attr("height", 20).attr("fill", "transparent");
-            btn.append("path")
-               .attr("d", "M12 5v14M5 12l7 7 7-7") // Arrow down icon path approx
-               .attr("stroke", "#64748b")
-               .attr("stroke-width", 2)
-               .attr("fill", "none")
-               .attr("transform", "scale(0.8)");
         }
     }
 
-  }, [data, viewMode, focusId, selectedPersonId, onSelectPerson]);
+  }, [data, viewMode, visualRootId, selectedPersonId, onSelectPerson]);
 
   return (
     <div ref={wrapperRef} className="w-full h-full bg-slate-50 border overflow-hidden relative">
@@ -251,7 +320,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
             onClick={() => setViewMode('tree')}
             className={`flex items-center gap-2 px-3 py-2 rounded text-sm transition ${viewMode === 'tree' ? 'bg-emerald-100 text-emerald-800 font-medium' : 'text-slate-600 hover:bg-slate-100'}`}
         >
-            <ArrowDown size={16} /> Albero (Dall'alto)
+            <ArrowDown size={16} /> Albero (Schematico)
         </button>
         <button 
             onClick={() => setViewMode('network')}
@@ -261,8 +330,22 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
         </button>
       </div>
 
-      <div className="absolute bottom-4 right-4 z-10 bg-white/90 p-1 rounded-lg shadow border border-slate-200 text-xs text-slate-500 px-3 py-1">
-          Totale persone: {data.length}
+      {/* Pulsante RESET FOCUS (appare solo se siamo in vista parziale) */}
+      {viewMode === 'tree' && visualRootId && (
+          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-10">
+              <button 
+                onClick={handleResetFocus}
+                className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-full shadow-lg hover:bg-emerald-700 transition font-medium animate-bounce-in"
+              >
+                  <Maximize size={16} />
+                  Torna all'Albero Completo
+              </button>
+          </div>
+      )}
+
+      <div className="absolute bottom-4 right-4 z-10 bg-white/90 p-1 rounded-lg shadow border border-slate-200 text-xs text-slate-500 px-3 py-1 flex items-center gap-2">
+          <span>Totale: {data.length}</span>
+          {visualRootId && <span className="text-emerald-600 font-bold">(Vista Parziale)</span>}
       </div>
 
       <svg ref={svgRef} className="w-full h-full touch-none" style={{cursor: 'grab'}}></svg>

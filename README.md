@@ -1,20 +1,53 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Genealogia Resta
 
-# Run and deploy your AI Studio app
+Applicazione web per la gestione e visualizzazione avanzata di alberi genealogici. 
+Il progetto permette di visualizzare la discendenza in formato schematico/ortogonale, importare file GEDCOM e gestire i membri della famiglia tramite un pannello di amministrazione.
 
-This contains everything you need to run your app locally.
+## Funzionalità
 
-View your app in AI Studio: https://ai.studio/apps/drive/1zydnz_EQomMY2fbtXfRJNa0Rs03SSy6O
+- **Visualizzazione Albero**: Grafico interattivo basato su D3.js con linee ortogonali professionali.
+- **Navigazione**: Possibilità di fare "focus" su specifici rami e tornare alla vista completa.
+- **Importazione GEDCOM**: Algoritmo intelligente per unire (merge) nuovi dati o sostituire l'albero esistente.
+- **Gestione Utenti**: Pannello admin per approvare o rifiutare le registrazioni.
+- **Privacy**: I dati sensibili sono salvati nel LocalStorage del browser.
 
-## Run Locally
+## Tecnologie
 
-**Prerequisites:**  Node.js
+- React 18
+- TypeScript
+- D3.js (Visualizzazione Dati)
+- Lucide React (Icone)
+- Tailwind CSS (Styling)
 
+## Installazione e Sviluppo
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+1. Clona il repository:
+   ```bash
+   git clone https://github.com/tuo-username/genealogia-resta.git
+   ```
+
+2. Installa le dipendenze:
+   ```bash
+   npm install
+   ```
+
+3. Crea un file `.env` nella root del progetto per le credenziali Admin (opzionale, vedi `constants.ts`):
+   ```env
+   VITE_ADMIN_EMAIL=tua@email.com
+   VITE_ADMIN_PASSWORD=tua_password_sicura
+   ```
+
+4. Avvia il server di sviluppo:
+   ```bash
+   npm run dev
+   ```
+
+## Struttura del Progetto
+
+- `/components`: Componenti React (FamilyTree, PersonEditor, etc.)
+- `/services`: Logica di business (Parsing GEDCOM, Storage locale)
+- `/types`: Definizioni TypeScript
+
+## Licenza
+
+Privata / Uso famigliare.
