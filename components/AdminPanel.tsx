@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User } from '../types';
-import { getStoredUsers, getStoredPeople, approveUser, deleteUser, updateUserPassword } from '../services/storageService';
-import { Check, X, Shield, RefreshCw, Clock, KeyRound, Download, Globe } from 'lucide-react';
+import { getStoredUsers, approveUser, deleteUser, updateUserPassword } from '../services/storageService';
+import { Check, X, Shield, RefreshCw, Clock, KeyRound } from 'lucide-react';
 
 export const AdminPanel: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
@@ -40,47 +40,9 @@ export const AdminPanel: React.FC = () => {
       }
   };
 
-  const handleExportForPublishing = () => {
-      const people = getStoredPeople();
-      const jsonString = JSON.stringify(people, null, 2);
-      const blob = new Blob([jsonString], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `backup_albero_${new Date().toISOString().slice(0,10)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      
-      alert("File scaricato!\n\nPer rendere queste modifiche visibili a tutti:\n1. Copia il contenuto del file scaricato.\n2. Invialo allo sviluppatore (o incollalo nella chat) chiedendo di aggiornare i 'Dati Iniziali'.");
-  };
-
   return (
     <div className="space-y-6 animate-fadeIn">
       
-      {/* SEZIONE PUBBLICAZIONE */}
-      <div className="bg-white rounded-lg shadow-sm border border-emerald-200 overflow-hidden">
-          <div className="p-4 bg-emerald-50 border-b border-emerald-100 flex justify-between items-center">
-              <h3 className="font-bold text-emerald-800 flex items-center gap-2">
-                  <Globe size={18} /> Pubblicazione Dati
-              </h3>
-          </div>
-          <div className="p-6">
-              <p className="text-sm text-slate-600 mb-4">
-                  Poiché l'app non ha un database in cloud, le modifiche che fai restano sul tuo dispositivo.
-                  Per aggiornare ciò che vedono gli altri utenti quando si collegano, devi scaricare i dati attuali e chiedere di aggiornare il codice sorgente.
-              </p>
-              <button 
-                  onClick={handleExportForPublishing}
-                  className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700 transition shadow-sm font-medium"
-              >
-                  <Download size={18} />
-                  Scarica Dati per Pubblicazione
-              </button>
-          </div>
-      </div>
-
       {/* SEZIONE UTENTI */}
       <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
