@@ -39,6 +39,7 @@ export interface GedcomRecord {
 
 export interface User {
   email: string;
+  password?: string; // Semplificazione per prototipo locale
   fullName: string;
   role: 'admin' | 'user';
   isApproved: boolean;
