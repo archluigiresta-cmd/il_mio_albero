@@ -1,7 +1,17 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as d3 from 'd3';
 import { Person, Gender } from '../types';
-import { Network, GitGraph, Search, ArrowDown, ZoomIn, Crosshair, RotateCcw, Maximize } from 'lucide-react';
+import { 
+  ArrowDown, 
+  ArrowLeft, 
+  Users, 
+  Search, 
+  ZoomIn, 
+  ZoomOut, 
+  Maximize, 
+  ChevronRight,
+  Filter
+} from 'lucide-react';
 
 interface FamilyTreeProps {
   data: Person[];
@@ -9,346 +19,415 @@ interface FamilyTreeProps {
   selectedPersonId?: string;
 }
 
+type ViewType = 'descendants' | 'ancestors' | 'family';
+
+interface HierarchyNode {
+  id: string;
+  person: Person;
+  spouse?: Person; // Visualizziamo il coniuge principale nel nodo
+  children: HierarchyNode[];
+  isSpousePlaceholder?: boolean;
+}
+
 export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, selectedPersonId }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const [viewMode, setViewMode] = useState<'network' | 'tree'>('tree');
-  
-  // State per gestire la radice visuale corrente (Totale vs Parziale)
-  const [visualRootId, setVisualRootId] = useState<string | null>(null);
-  const [historyIds, setHistoryIds] = useState<string[]>([]); // Per tornare indietro passo passo se necessario
+  const [viewMode, setViewMode] = useState<ViewType>('descendants');
+  const [rootId, setRootId] = useState<string | null>(null);
 
-  // Trova il capostipite assoluto (o il migliore candidato)
-  const findAbsoluteRoot = (people: Person[]) => {
-      if (!people || people.length === 0) return null;
-      // Cerca qualcuno senza genitori nel dataset
-      const root = people.find(p => 
-          !people.some(d => d.id === p.fatherId) && 
-          !people.some(d => d.id === p.motherId)
-      );
-      // Fallback: nodo con più discendenti diretti
-      if (!root) {
-          return people.reduce((prev, current) => 
-            (current.childrenIds.length > prev.childrenIds.length) ? current : prev
-          , people[0]);
+  // --- 1. DATA PROCESSING ---
+
+  // Trova il capostipite assoluto (il più anziano senza genitori noti)
+  const absoluteRoot = useMemo(() => {
+      if (!data.length) return null;
+      // Cerca qualcuno senza genitori
+      const roots = data.filter(p => !p.fatherId && !p.motherId);
+      // Se ce ne sono più di uno, prendi quello con più discendenti o il più vecchio
+      if (roots.length > 0) {
+          return roots.sort((a, b) => (a.birthDate || '9999') > (b.birthDate || '9999') ? 1 : -1)[0];
       }
-      return root;
+      return data[0];
+  }, [data]);
+
+  // Imposta la root iniziale se non c'è
+  useEffect(() => {
+      if (!rootId && absoluteRoot) {
+          setRootId(absoluteRoot.id);
+      }
+  }, [absoluteRoot, rootId]);
+
+  // Sincronizza selezione esterna con root se necessario (opzionale, per ora lasciamo navigazione manuale)
+  
+  // COSTRUZIONE ALBERO: DISCENDENTI (Dall'alto in basso)
+  const buildDescendantTree = (id: string, depth: number = 0): HierarchyNode | null => {
+      if (depth > 20) return null; // Safety break
+      const p = data.find(x => x.id === id);
+      if (!p) return null;
+
+      // Trova coniuge (il primo o quello rilevante per i figli)
+      // Per semplicità grafica, mostriamo il primo coniuge o quello che è genitore dei figli
+      let spouse: Person | undefined = undefined;
+      if (p.spouseIds.length > 0) {
+          spouse = data.find(s => s.id === p.spouseIds[0]);
+      }
+
+      // Figli
+      const childrenNodes = p.childrenIds
+        .map(cid => buildDescendantTree(cid, depth + 1))
+        .filter((n): n is HierarchyNode => n !== null)
+        .sort((a, b) => (a.person.birthDate || '9999').localeCompare(b.person.birthDate || '9999'));
+
+      return {
+          id: p.id,
+          person: p,
+          spouse: spouse,
+          children: childrenNodes
+      };
   };
 
-  const handleSetFocus = (id: string) => {
-      setVisualRootId(id);
-      // Opzionale: scroll up o reset zoom se necessario, ma D3 lo gestirà
+  // COSTRUZIONE ALBERO: ANTENATI (Dal basso in alto - visualizzato orizzontalmente)
+  const buildAncestorTree = (id: string, depth: number = 0): HierarchyNode | null => {
+      if (depth > 20) return null;
+      const p = data.find(x => x.id === id);
+      if (!p) return null;
+
+      const parents: HierarchyNode[] = [];
+      if (p.fatherId) {
+          const f = buildAncestorTree(p.fatherId, depth + 1);
+          if (f) parents.push(f);
+      }
+      if (p.motherId) {
+          const m = buildAncestorTree(p.motherId, depth + 1);
+          if (m) parents.push(m);
+      }
+
+      return {
+          id: p.id,
+          person: p,
+          children: parents // Invertiamo semanticamente: i "children" del nodo D3 sono i genitori
+      };
   };
 
-  const handleResetFocus = () => {
-      setVisualRootId(null);
-  };
+  // --- 2. RENDERING ---
 
   useEffect(() => {
-    if (!data || data.length === 0 || !svgRef.current || !wrapperRef.current) return;
+      if (!data.length || !svgRef.current || !wrapperRef.current || !rootId) return;
 
-    const svg = d3.select(svgRef.current);
-    svg.selectAll("*").remove(); 
-    
-    const width = wrapperRef.current.clientWidth || 1000;
-    const height = wrapperRef.current.clientHeight || 800;
+      const width = wrapperRef.current.clientWidth;
+      const height = wrapperRef.current.clientHeight;
 
-    const g = svg.append("g");
-    
-    const zoom = d3.zoom()
-        .scaleExtent([0.1, 4])
-        .on("zoom", (event) => g.attr("transform", event.transform));
+      const svg = d3.select(svgRef.current);
+      svg.selectAll("*").remove();
 
-    svg.call(zoom as any);
+      const g = svg.append("g");
 
-    if (viewMode === 'network') {
-        // --- VISTA RETE (FORCE) ---
-        // (Invariata per compatibilità, utile per debug relazioni)
-        const nodes = data.map(d => ({ ...d }));
-        const links: any[] = [];
+      // Setup Zoom
+      const zoom = d3.zoom<SVGSVGElement, unknown>()
+          .scaleExtent([0.1, 3])
+          .on("zoom", (event) => g.attr("transform", event.transform));
+      svg.call(zoom);
 
-        data.forEach(p => {
-            p.childrenIds.forEach(childId => {
-                if (data.find(x => x.id === childId)) links.push({ source: p.id, target: childId, type: 'child' });
-            });
-            p.spouseIds.forEach(spouseId => {
-                if (p.id < spouseId && data.find(x => x.id === spouseId)) links.push({ source: p.id, target: spouseId, type: 'spouse' });
-            });
-        });
+      // --- CONFIGURAZIONE LAYOUT ---
+      // Dimensioni Nodo
+      const cardWidth = 220;
+      const cardHeight = 80;
+      const nodeW = viewMode === 'descendants' ? 250 : 280; // Spaziatura orizzontale
+      const nodeH = viewMode === 'descendants' ? 150 : 100; // Spaziatura verticale
 
-        const simulation = d3.forceSimulation(nodes as any)
-            .force("link", d3.forceLink(links).id((d: any) => d.id).distance(100))
-            .force("charge", d3.forceManyBody().strength(-400))
-            .force("center", d3.forceCenter(width / 2, height / 2))
-            .force("collide", d3.forceCollide(60));
+      let rootData: HierarchyNode | null = null;
+      
+      if (viewMode === 'ancestors') {
+          rootData = buildAncestorTree(rootId);
+      } else {
+          // Descendants o Family
+          rootData = buildDescendantTree(rootId);
+      }
 
-        const link = g.append("g").selectAll("line")
-            .data(links).enter().append("line")
-            .attr("stroke", "#cbd5e1").attr("stroke-width", 2);
+      if (!rootData) return;
 
-        const node = g.append("g").selectAll("g")
-            .data(nodes).enter().append("g")
-            .call(d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended) as any);
+      const hierarchy = d3.hierarchy<HierarchyNode>(rootData);
+      
+      // Calcola layout
+      let treeLayout;
+      if (viewMode === 'ancestors') {
+          // Layout Orizzontale per antenati (Sinistra -> Destra)
+          treeLayout = d3.tree<HierarchyNode>()
+            .nodeSize([cardHeight + 40, cardWidth + 60]) // Invertito per orizzontale
+            .separation(() => 1);
+      } else {
+          // Layout Verticale per discendenti
+          treeLayout = d3.tree<HierarchyNode>()
+            .nodeSize([nodeW, nodeH])
+            .separation((a, b) => a.parent === b.parent ? 1.1 : 1.2);
+      }
 
-        node.append("circle")
-            .attr("r", 25)
-            .attr("fill", (d: any) => d.gender === Gender.Male ? "#eff6ff" : (d.gender === Gender.Female ? "#fdf2f8" : "#f1f5f9"))
-            .attr("stroke", (d: any) => d.id === selectedPersonId ? "#2563eb" : "#94a3b8")
-            .attr("stroke-width", (d: any) => d.id === selectedPersonId ? 3 : 1)
-            .on("click", (e, d: any) => { e.stopPropagation(); onSelectPerson(d); });
+      const root = treeLayout(hierarchy);
 
-        node.append("text")
-            .text((d: any) => d.firstName)
-            .attr("text-anchor", "middle")
-            .attr("dy", 4)
-            .style("font-size", "10px");
+      // Centra inizialmente
+      const initialX = width / 2;
+      const initialY = viewMode === 'ancestors' ? height / 2 : 100;
+      // Per ancestors, ruotiamo mentalmente: x è y, y è x
+      
+      svg.call(zoom.transform, d3.zoomIdentity.translate(initialX, initialY).scale(0.8));
 
-        simulation.on("tick", () => {
-            link.attr("x1", (d: any) => d.source.x).attr("y1", (d: any) => d.source.y)
-                .attr("x2", (d: any) => d.target.x).attr("y2", (d: any) => d.target.y);
-            node.attr("transform", (d: any) => `translate(${d.x},${d.y})`);
-        });
+      // --- DISEGNO CONNESSIONI (LINKS) ---
+      const linkGen = g.selectAll(".link")
+          .data(root.links())
+          .enter()
+          .append("path")
+          .attr("class", "link")
+          .attr("fill", "none")
+          .attr("stroke", "#94a3b8")
+          .attr("stroke-width", 1.5)
+          .attr("d", (d) => {
+              if (viewMode === 'ancestors') {
+                  // Orizzontale: da Destra a Sinistra (Antenati) o Sinistra a Destra
+                  // Qui visualizziamo: Root a Sinistra, Genitori a Destra
+                  return `M${d.source.y},${d.source.x}
+                          H${(d.source.y + d.target.y) / 2}
+                          V${d.target.x}
+                          H${d.target.y}`;
+              } else {
+                  // Verticale (Standard)
+                  return `M${d.source.x},${d.source.y + cardHeight/2}
+                          V${(d.source.y + d.target.y) / 2}
+                          H${d.target.x}
+                          V${d.target.y - cardHeight/2}`;
+              }
+          });
 
-        function dragstarted(event: any, d: any) { if (!event.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }
-        function dragged(event: any, d: any) { d.fx = event.x; d.fy = event.y; }
-        function dragended(event: any, d: any) { if (!event.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }
+      // --- DISEGNO NODI ---
+      const node = g.selectAll(".node")
+          .data(root.descendants())
+          .enter()
+          .append("g")
+          .attr("class", "node")
+          .attr("transform", d => `translate(${viewMode === 'ancestors' ? d.y : d.x},${viewMode === 'ancestors' ? d.x : d.y})`)
+          .style("cursor", "pointer")
+          .on("click", (e, d) => {
+              e.stopPropagation();
+              onSelectPerson(d.data.person);
+          });
 
-    } else {
-        // --- VISTA ALBERO PROFESSIONALE (Schematico Ortogonale) ---
-        
-        // 1. Determina la radice corrente
-        let rootPerson = visualRootId ? data.find(p => p.id === visualRootId) : findAbsoluteRoot(data);
-        if (!rootPerson && data.length > 0) rootPerson = data[0];
+      // Definizioni grafiche
+      const getNodeColor = (gender: Gender) => {
+          if (gender === Gender.Male) return "#e0f2fe"; // Sky 100
+          if (gender === Gender.Female) return "#fce7f3"; // Pink 100
+          return "#f1f5f9";
+      };
+      
+      const getStrokeColor = (gender: Gender, isSelected: boolean) => {
+          if (isSelected) return "#0f172a";
+          if (gender === Gender.Male) return "#3b82f6";
+          if (gender === Gender.Female) return "#ec4899";
+          return "#94a3b8";
+      };
 
-        // 2. Costruisci la gerarchia ricorsiva
-        const buildNode = (id: string, depth: number): any => {
-            if (depth > 50) return null; // Break loop
-            const p = data.find(x => x.id === id);
-            if (!p) return null;
+      // Costruiamo la "Card"
+      // Se c'è un coniuge (e non siamo in Ancestor mode dove visualizziamo singolo), allarghiamo il box
+      // In Ancestor mode, visualizziamo solo la persona del sangue per chiarezza, o entrambi se vogliamo.
+      // Qui facciamo: Descendants = Doppia Card se sposati. Ancestors = Singola.
+      
+      node.each(function(d) {
+          const gNode = d3.select(this);
+          const p = d.data.person;
+          const s = d.data.spouse;
+          const isSelected = p.id === selectedPersonId;
 
-            // Raccogli i figli
-            // Nota: Ordiniamo per data di nascita se possibile per coerenza visuale
-            const childrenNodes = p.childrenIds
-                .map(cid => buildNode(cid, depth + 1))
-                .filter(c => c !== null)
-                .sort((a, b) => {
-                    const dateA = a.data.birthDate || "9999";
-                    const dateB = b.data.birthDate || "9999";
-                    return dateA.localeCompare(dateB);
-                });
+          // Se modalità discendenti e c'è un coniuge, disegniamo il box doppio
+          if (viewMode === 'descendants' && s) {
+              const totalW = cardWidth + 20; // Un po' più largo
+              
+              // Box Contenitore (Ombra)
+              gNode.append("rect")
+                .attr("x", -totalW / 2)
+                .attr("y", -cardHeight / 2)
+                .attr("width", totalW)
+                .attr("height", cardHeight)
+                .attr("rx", 4)
+                .attr("fill", "white")
+                .attr("stroke", isSelected ? "#000" : "#cbd5e1")
+                .attr("stroke-width", isSelected ? 2 : 1)
+                .attr("filter", "drop-shadow(2px 2px 3px rgba(0,0,0,0.1))");
 
-            return {
-                name: `${p.firstName} ${p.lastName}`,
-                data: p,
-                children: childrenNodes.length > 0 ? childrenNodes : null
-            };
-        };
+              // Linea divisoria verticale
+              gNode.append("line")
+                .attr("x1", 0)
+                .attr("y1", -cardHeight/2 + 5)
+                .attr("x2", 0)
+                .attr("y2", cardHeight/2 - 5)
+                .attr("stroke", "#cbd5e1")
+                .attr("stroke-dasharray", "4");
 
-        const hierarchyData = rootPerson ? buildNode(rootPerson.id, 0) : null;
-        
-        if (hierarchyData) {
-            const root = d3.hierarchy(hierarchyData);
-            
-            // Configurazione Dimensioni
-            const nodeWidth = 220;
-            const nodeHeight = 70;
-            const horizontalSpacing = 40;
-            const verticalSpacing = 120; // Aumentato per le linee ortogonali
-            
-            const treeLayout = d3.tree()
-                .nodeSize([nodeWidth + horizontalSpacing, nodeHeight + verticalSpacing]);
-            
-            treeLayout(root);
+              // Persona (Sinistra)
+              const gLeft = gNode.append("g").attr("transform", `translate(${-totalW/4}, 0)`);
+              
+              gLeft.append("text")
+                  .text(p.firstName)
+                  .attr("y", -10)
+                  .attr("text-anchor", "middle")
+                  .style("font-weight", "bold")
+                  .style("font-size", "12px");
+              gLeft.append("text")
+                  .text(p.lastName)
+                  .attr("y", 5)
+                  .attr("text-anchor", "middle")
+                  .style("font-size", "12px");
+              gLeft.append("text")
+                  .text(p.birthDate?.split(' ').pop() || '?')
+                  .attr("y", 20)
+                  .attr("text-anchor", "middle")
+                  .style("font-size", "10px")
+                  .style("fill", "#64748b");
+              
+              // Icona Sesso Left
+              gLeft.append("circle")
+                   .attr("r", 4)
+                   .attr("cx", -30)
+                   .attr("cy", -15)
+                   .attr("fill", p.gender === Gender.Male ? "#3b82f6" : "#ec4899");
 
-            // Centra l'albero inizialmente
-            const initialTransform = d3.zoomIdentity.translate(width/2, 100).scale(0.8);
-            svg.call(zoom.transform as any, initialTransform);
+              // Coniuge (Destra)
+              const gRight = gNode.append("g").attr("transform", `translate(${totalW/4}, 0)`);
+              gRight.append("text")
+                  .text(s.firstName)
+                  .attr("y", -10)
+                  .attr("text-anchor", "middle")
+                  .style("font-weight", "bold")
+                  .style("font-size", "12px");
+              gRight.append("text")
+                  .text(s.lastName)
+                  .attr("y", 5)
+                  .attr("text-anchor", "middle")
+                  .style("font-size", "12px");
+               
+              // Pulsante "Focus Qui" (Sotto al centro)
+              const btn = gNode.append("g")
+                 .attr("transform", `translate(0, ${cardHeight/2 + 10})`)
+                 .style("cursor", "pointer")
+                 .on("click", (evt) => {
+                     evt.stopPropagation();
+                     setRootId(p.id);
+                 });
+               
+              btn.append("circle").attr("r", 8).attr("fill", "#e2e8f0");
+              btn.append("path").attr("d", "M-4 -2 L0 4 L4 -2").attr("fill", "none").attr("stroke", "#475569").attr("stroke-width", 1.5);
+              btn.append("title").text("Mostra discendenti di questa coppia");
 
-            const gTree = g.append("g");
+          } else {
+              // Box Singolo (Ancestors o Single Person)
+              const w = 160;
+              gNode.append("rect")
+                .attr("x", -w / 2)
+                .attr("y", -cardHeight / 2)
+                .attr("width", w)
+                .attr("height", cardHeight)
+                .attr("rx", 4)
+                .attr("fill", getNodeColor(p.gender))
+                .attr("stroke", getStrokeColor(p.gender, isSelected))
+                .attr("stroke-width", isSelected ? 3 : 1)
+                .attr("filter", "drop-shadow(2px 2px 3px rgba(0,0,0,0.1))");
 
-            // --- DISEGNO LINK ORTOGONALI (Angolo Retto) ---
-            gTree.selectAll(".link")
-                .data(root.links())
-                .enter()
-                .append("path")
-                .attr("class", "link")
-                .attr("fill", "none")
-                .attr("stroke", "#64748b") // Slate-500
-                .attr("stroke-width", 1.5)
-                .attr("d", (d: any) => {
-                    // Logica percorso: Start(Bottom Middle) -> Giù a metà -> Orizzontale -> Giù a Top Target
-                    const sourceX = d.source.x;
-                    const sourceY = d.source.y + nodeHeight / 2; // Parte dal fondo del genitore
-                    const targetX = d.target.x;
-                    const targetY = d.target.y - nodeHeight / 2; // Arriva in cima al figlio
-                    const midY = (sourceY + targetY) / 2;
+              gNode.append("text")
+                  .text(`${p.firstName} ${p.lastName}`)
+                  .attr("y", -5)
+                  .attr("text-anchor", "middle")
+                  .style("font-weight", "bold")
+                  .style("font-size", "13px")
+                  .style("fill", "#1e293b");
 
-                    return `M${sourceX},${sourceY} 
-                            V${midY} 
-                            H${targetX} 
-                            V${targetY}`;
-                });
+              gNode.append("text")
+                  .text(`${p.birthDate || ''}`)
+                  .attr("y", 15)
+                  .attr("text-anchor", "middle")
+                  .style("font-size", "11px")
+                  .style("fill", "#64748b");
 
-            // --- DISEGNO NODI ---
-            const node = gTree.selectAll(".node")
-                .data(root.descendants())
-                .enter()
-                .append("g")
-                .attr("class", "node")
-                .attr("transform", (d: any) => `translate(${d.x},${d.y})`)
-                .style("cursor", "pointer")
-                .on("click", (event, d: any) => {
-                    event.stopPropagation();
-                    // Seleziona per la sidebar
-                    onSelectPerson(d.data.data);
-                });
+              // Pulsante per espandere/cambiare root
+              const btn = gNode.append("g")
+                 .attr("transform", `translate(${w/2}, 0)`) // A destra
+                 .style("opacity", 0) // Invisibile default, visibile hover gestito via CSS o logica
+                 .attr("class", "action-btn");
 
-            // Box Rettangolare (Stile Schematico)
-            node.append("rect")
-                .attr("width", nodeWidth)
-                .attr("height", nodeHeight)
-                .attr("x", -nodeWidth / 2)
-                .attr("y", -nodeHeight / 2)
-                .attr("rx", 0) // Spigoli vivi per look tecnico, o poco smussati
-                .attr("ry", 0)
-                .attr("fill", "#ffffff")
-                // Bordo colorato in base al sesso, più scuro se selezionato
-                .attr("stroke", (d: any) => {
-                    if (d.data.data.id === selectedPersonId) return "#000000";
-                    return d.data.data.gender === Gender.Male ? "#3b82f6" : (d.data.data.gender === Gender.Female ? "#ec4899" : "#94a3b8");
-                })
-                .attr("stroke-width", (d: any) => d.data.data.id === selectedPersonId ? 2 : 1)
-                // Ombra leggera
-                .attr("filter", "drop-shadow(2px 2px 2px rgba(0,0,0,0.05))");
-
-            // Indicatore laterale colorato (Banda sinistra)
-            node.append("rect")
-                .attr("width", 4)
-                .attr("height", nodeHeight)
-                .attr("x", -nodeWidth / 2)
-                .attr("y", -nodeHeight / 2)
-                .attr("fill", (d: any) => d.data.data.gender === Gender.Male ? "#3b82f6" : (d.data.data.gender === Gender.Female ? "#ec4899" : "#94a3b8"));
-
-            // Nome Persona
-            node.append("text")
-                .attr("dy", -5)
-                .attr("x", -nodeWidth / 2 + 15) // Allineato a sinistra
-                .attr("text-anchor", "start")
-                .style("font-weight", "600")
-                .style("font-family", "sans-serif")
-                .style("font-size", "13px")
-                .style("fill", "#1e293b")
-                .text((d: any) => {
-                    // Tronca se troppo lungo
-                    const name = d.data.name;
-                    return name.length > 25 ? name.substring(0, 22) + '...' : name;
-                });
-            
-            // Dati Date
-            node.append("text")
-                .attr("dy", 12)
-                .attr("x", -nodeWidth / 2 + 15)
-                .attr("text-anchor", "start")
-                .style("font-size", "11px")
-                .style("fill", "#64748b")
-                .text((d: any) => {
-                    const b = d.data.data.birthDate || '';
-                    const dth = d.data.data.deathDate || (d.data.data.isLiving ? '' : '†');
-                    if (!b && !dth) return '';
-                    return `${b} - ${dth}`;
-                });
-
-            // --- PULSANTI AZIONE SUL NODO ---
-            
-            // 1. FOCUS BUTTON (Mirino)
-            // Mostra solo se il nodo ha figli (ha senso fare focus per vedere i discendenti) o se non siamo già sulla radice visuale
-            node.each(function(d: any) {
-                // Posizione in basso a destra del nodo
-                const btnGroup = d3.select(this).append("g")
-                    .attr("transform", `translate(${nodeWidth/2 - 25}, ${nodeHeight/2 - 25})`)
-                    .style("cursor", "pointer")
-                    .on("click", (e) => {
-                        e.stopPropagation();
-                        handleSetFocus(d.data.data.id);
+              // Logica Focus
+              gNode.on("mouseenter", function() {
+                  d3.select(this).append("g")
+                    .attr("class", "hover-ctrl")
+                    .attr("transform", `translate(${w/2 - 10}, ${-cardHeight/2})`)
+                    .call(g => {
+                         g.append("circle").attr("r", 10).attr("fill", "white").attr("stroke", "#334155");
+                         g.append("path").attr("d", "M-3 -3 L3 3 M-3 3 L3 -3").attr("stroke", "#334155"); // Crosshair simulation
+                    })
+                    .on("click", (ev) => {
+                        ev.stopPropagation();
+                        setRootId(p.id);
                     });
+              }).on("mouseleave", function() {
+                  d3.select(this).select(".hover-ctrl").remove();
+              });
+          }
+      });
 
-                // Sfondo bottone
-                btnGroup.append("rect")
-                    .attr("width", 24)
-                    .attr("height", 24)
-                    .attr("rx", 4)
-                    .attr("fill", "#f1f5f9")
-                    .attr("stroke", "#cbd5e1");
+  }, [data, viewMode, rootId, selectedPersonId, onSelectPerson]);
 
-                // Icona Focus (Cerchio e mirino stilizzato)
-                btnGroup.append("circle").attr("cx", 12).attr("cy", 12).attr("r", 6).attr("stroke", "#475569").attr("fill", "none");
-                btnGroup.append("line").attr("x1", 12).attr("y1", 4).attr("x2", 12).attr("y2", 7).attr("stroke", "#475569");
-                btnGroup.append("line").attr("x1", 12).attr("y1", 17).attr("x2", 12).attr("y2", 20).attr("stroke", "#475569");
-                btnGroup.append("line").attr("x1", 4).attr("y1", 12).attr("x2", 7).attr("y2", 12).attr("stroke", "#475569");
-                btnGroup.append("line").attr("x1", 17).attr("y1", 12).attr("x2", 20).attr("y2", 12).attr("stroke", "#475569");
-                
-                // Tooltip
-                btnGroup.append("title").text("Focalizza vista su questo ramo");
-            });
 
-            // Icona Coniuge (Se presente)
-            node.each(function(d: any) {
-                if (d.data.data.spouseIds && d.data.data.spouseIds.length > 0) {
-                     d3.select(this).append("text")
-                        .attr("dx", nodeWidth/2 - 10)
-                        .attr("dy", -nodeHeight/2 + 15)
-                        .attr("text-anchor", "end")
-                        .style("font-size", "12px")
-                        .style("fill", "#ef4444")
-                        .text("❤");
-                }
-            });
-        }
-    }
-
-  }, [data, viewMode, visualRootId, selectedPersonId, onSelectPerson]);
+  // --- UI CONTROLS ---
 
   return (
-    <div ref={wrapperRef} className="w-full h-full bg-slate-50 border overflow-hidden relative">
-      {/* Controlli Vista */}
-      <div className="absolute top-4 left-4 z-10 flex flex-col gap-2 bg-white/90 p-2 rounded-lg shadow-lg backdrop-blur-sm border border-slate-200">
-        <div className="flex items-center gap-1 mb-1 pb-2 border-b border-slate-100">
-            <Search size={14} className="text-slate-400"/>
-            <span className="text-xs font-bold text-slate-500 uppercase px-1">Vista</span>
-        </div>
-        <button 
-            onClick={() => setViewMode('tree')}
-            className={`flex items-center gap-2 px-3 py-2 rounded text-sm transition ${viewMode === 'tree' ? 'bg-emerald-100 text-emerald-800 font-medium' : 'text-slate-600 hover:bg-slate-100'}`}
-        >
-            <ArrowDown size={16} /> Albero (Schematico)
-        </button>
-        <button 
-            onClick={() => setViewMode('network')}
-            className={`flex items-center gap-2 px-3 py-2 rounded text-sm transition ${viewMode === 'network' ? 'bg-emerald-100 text-emerald-800 font-medium' : 'text-slate-600 hover:bg-slate-100'}`}
-        >
-            <Network size={16} /> Globale (Rete)
-        </button>
-      </div>
-
-      {/* Pulsante RESET FOCUS (appare solo se siamo in vista parziale) */}
-      {viewMode === 'tree' && visualRootId && (
-          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-10">
+    <div ref={wrapperRef} className="w-full h-full bg-slate-50 border-l border-slate-200 relative overflow-hidden">
+      
+      {/* HEADER CONTROLS */}
+      <div className="absolute top-4 left-4 z-10 flex flex-col sm:flex-row gap-2">
+          
+          <div className="bg-white p-1 rounded-lg shadow border border-slate-200 flex gap-1">
               <button 
-                onClick={handleResetFocus}
-                className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-full shadow-lg hover:bg-emerald-700 transition font-medium animate-bounce-in"
+                onClick={() => setViewMode('descendants')}
+                className={`flex items-center gap-2 px-3 py-2 rounded text-sm font-medium transition ${viewMode === 'descendants' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+                title="Visualizza discendenza (Dall'alto in basso)"
               >
-                  <Maximize size={16} />
-                  Torna all'Albero Completo
+                  <ArrowDown size={16} /> Discendenti
+              </button>
+              <button 
+                onClick={() => setViewMode('ancestors')}
+                className={`flex items-center gap-2 px-3 py-2 rounded text-sm font-medium transition ${viewMode === 'ancestors' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+                title="Visualizza antenati (Da sinistra a destra)"
+              >
+                  <ArrowLeft size={16} /> Antenati
               </button>
           </div>
-      )}
 
-      <div className="absolute bottom-4 right-4 z-10 bg-white/90 p-1 rounded-lg shadow border border-slate-200 text-xs text-slate-500 px-3 py-1 flex items-center gap-2">
-          <span>Totale: {data.length}</span>
-          {visualRootId && <span className="text-emerald-600 font-bold">(Vista Parziale)</span>}
+          <div className="bg-white p-1 rounded-lg shadow border border-slate-200 flex gap-1 items-center px-3">
+              <span className="text-xs font-bold text-slate-400 uppercase mr-2">Focus:</span>
+              <span className="text-sm font-bold text-slate-700">
+                  {data.find(p => p.id === rootId)?.firstName} {data.find(p => p.id === rootId)?.lastName}
+              </span>
+              {rootId !== absoluteRoot?.id && (
+                  <button 
+                    onClick={() => absoluteRoot && setRootId(absoluteRoot.id)}
+                    className="ml-2 p-1 hover:bg-slate-100 rounded text-emerald-600"
+                    title="Torna al Capostipite"
+                  >
+                      <Maximize size={14} />
+                  </button>
+              )}
+          </div>
+
       </div>
 
-      <svg ref={svgRef} className="w-full h-full touch-none" style={{cursor: 'grab'}}></svg>
+      {/* HELP TEXT BOTTOM */}
+      <div className="absolute bottom-4 left-4 z-10 pointer-events-none">
+          <div className="bg-white/80 backdrop-blur p-3 rounded-lg border border-slate-200 shadow-sm text-xs text-slate-500 max-w-sm">
+             <p className="font-bold mb-1 text-slate-700">Legenda Visualizzazione</p>
+             <ul className="list-disc pl-4 space-y-1">
+                 <li>I nodi mostrano <strong>Persona</strong> e eventuale <strong>Coniuge</strong>.</li>
+                 <li>Le linee sono ortogonali per massimizzare la chiarezza.</li>
+                 <li>Passa il mouse su una casella per fare <strong>Focus</strong> su quel ramo.</li>
+                 <li>Usa la rotellina per Zoomare e Trascina per spostarti.</li>
+             </ul>
+          </div>
+      </div>
+
+      <svg ref={svgRef} className="w-full h-full touch-none bg-slate-50 cursor-grab active:cursor-grabbing"></svg>
     </div>
   );
 };
