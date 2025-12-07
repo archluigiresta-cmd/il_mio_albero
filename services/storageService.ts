@@ -3,8 +3,6 @@ import { ADMIN_EMAIL, ADMIN_PASSWORD } from '../constants';
 
 const KEY_DATA = 'genealogy_data_v1';
 const KEY_USERS = 'genealogy_users_v1';
-// CAMBIAMENTO: Usiamo sessionStorage per la sessione attiva. 
-// Chiudendo il browser l'utente viene disconnesso.
 const KEY_SESSION = 'genealogy_session_active'; 
 
 // --- Data Management ---
@@ -90,7 +88,6 @@ const saveUsers = (users: User[]) => {
 
 export const approveUser = (email: string) => {
     const users = getStoredUsers();
-    // Trova e aggiorna
     const updated = users.map(u => {
         if (u.email === email) {
             return { ...u, isApproved: true };
@@ -103,6 +100,17 @@ export const approveUser = (email: string) => {
 export const deleteUser = (email: string) => {
     const users = getStoredUsers();
     const updated = users.filter(u => u.email !== email);
+    saveUsers(updated);
+};
+
+export const updateUserPassword = (email: string, newPass: string) => {
+    const users = getStoredUsers();
+    const updated = users.map(u => {
+        if (u.email === email) {
+            return { ...u, password: newPass };
+        }
+        return u;
+    });
     saveUsers(updated);
 };
 
@@ -169,7 +177,6 @@ export const registerUser = (email: string, password: string, fullName: string) 
 
 export const logout = () => {
     sessionStorage.removeItem(KEY_SESSION);
-    // Opzionale: ricarica la pagina per pulire lo stato React
     window.location.reload();
 };
 

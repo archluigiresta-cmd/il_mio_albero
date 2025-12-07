@@ -1,28 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { User } from '../types';
-import { getStoredUsers, approveUser, deleteUser } from '../services/storageService';
-import { Check, X, Shield, RefreshCw, Clock } from 'lucide-react';
+import { getStoredUsers, approveUser, deleteUser, updateUserPassword } from '../services/storageService';
+import { Check, X, Shield, RefreshCw, Clock, KeyRound } from 'lucide-react';
 
 export const AdminPanel: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
 
   const refresh = () => {
-    // Legge dal localStorage
     const allUsers = getStoredUsers();
-    // Filtra via l'admin e aggiorna lo stato
     setUsers(allUsers.filter(u => u.role !== 'admin'));
   };
 
   useEffect(() => {
-    // 1. Caricamento iniziale
     refresh();
-
-    // 2. Polling: Controlla ogni 2 secondi se ci sono cambiamenti nel localStorage
-    // Questo permette di vedere le registrazioni fatte in altre schede dello stesso browser
     const intervalId = setInterval(() => {
         refresh();
     }, 2000);
-
     return () => clearInterval(intervalId);
   }, []);
 
@@ -36,6 +29,15 @@ export const AdminPanel: React.FC = () => {
         deleteUser(email);
         refresh();
     }
+  };
+  
+  const handleResetPassword = (email: string) => {
+      const newPass = prompt(`Inserisci nuova password per ${email}:`);
+      if (newPass && newPass.trim().length > 0) {
+          updateUserPassword(email, newPass);
+          alert("Password aggiornata correttamente.");
+          refresh();
+      }
   };
 
   return (
@@ -64,8 +66,7 @@ export const AdminPanel: React.FC = () => {
           <table className="min-w-full divide-y divide-slate-100">
             <thead className="bg-white">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">Data</th>
-                <th className="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">Nome Utente</th>
+                <th className="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">Info</th>
                 <th className="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">Email</th>
                 <th className="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">Stato</th>
                 <th className="px-6 py-3 text-right text-xs font-bold text-slate-400 uppercase tracking-wider">Azioni</th>
@@ -74,14 +75,11 @@ export const AdminPanel: React.FC = () => {
             <tbody className="bg-white divide-y divide-slate-50">
               {users.map((user) => (
                 <tr key={user.email} className="hover:bg-slate-50 transition">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                    <div className="flex items-center gap-2">
-                        <Clock size={14} className="text-slate-300"/>
-                        {new Date(user.registeredAt).toLocaleDateString()}
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="text-sm font-medium text-slate-700">{user.fullName}</div>
+                    <div className="text-xs text-slate-400 flex items-center gap-1">
+                        <Clock size={10} /> {new Date(user.registeredAt).toLocaleDateString()}
                     </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-700">
-                    {user.fullName}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500 font-mono">
                     {user.email}
@@ -97,16 +95,23 @@ export const AdminPanel: React.FC = () => {
                       </span>
                     )}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-1">
                     {!user.isApproved && (
                         <button
                           onClick={() => handleApprove(user.email)}
                           className="text-emerald-600 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 p-2 rounded-lg transition"
                           title="Approva Accesso"
                         >
-                          <Check size={18} /> Approva
+                          <Check size={18} />
                         </button>
                     )}
+                    <button
+                      onClick={() => handleResetPassword(user.email)}
+                      className="text-blue-600 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 p-2 rounded-lg transition"
+                      title="Reset Password"
+                    >
+                      <KeyRound size={18} />
+                    </button>
                     <button
                       onClick={() => handleReject(user.email)}
                       className="text-red-600 hover:text-red-900 bg-red-50 hover:bg-red-100 p-2 rounded-lg transition"
