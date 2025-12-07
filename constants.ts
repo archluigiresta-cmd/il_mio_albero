@@ -1,11 +1,10 @@
 // CONFIGURAZIONE APP
 // Nota per GitHub: In produzione, utilizzare variabili d'ambiente per proteggere le credenziali.
 
-export const APP_VERSION = '1.4.2';
+export const APP_VERSION = '1.5.0';
 
-// Tenta di leggere da variabili d'ambiente (supporto Vite/Create-React-App)
-// Se non definite, usa credenziali di default per sviluppo locale.
-export const ADMIN_EMAIL = (import.meta as any).env?.VITE_ADMIN_EMAIL || 'admin@example.com';
+// Credenziali Admin Hardcoded (come richiesto)
+export const ADMIN_EMAIL = (import.meta as any).env?.VITE_ADMIN_EMAIL || 'arch.luigiresta@gmail.com';
 export const ADMIN_PASSWORD = (import.meta as any).env?.VITE_ADMIN_PASSWORD || 'admin123';
 
 export const APP_NAME = 'Genealogia Resta';
