@@ -1,23 +1,34 @@
 import React, { useState, useEffect } from 'react';
 import { User } from '../types';
 import { getStoredUsers, approveUser, deleteUser } from '../services/storageService';
-import { Check, X, Shield, RefreshCw } from 'lucide-react';
+import { Check, X, Shield, RefreshCw, Clock } from 'lucide-react';
 
 export const AdminPanel: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
 
   const refresh = () => {
-    // Rimuovi l'admin dalla lista visualizzata per pulizia
-    setUsers(getStoredUsers().filter(u => u.role !== 'admin'));
+    // Legge dal localStorage
+    const allUsers = getStoredUsers();
+    // Filtra via l'admin e aggiorna lo stato
+    setUsers(allUsers.filter(u => u.role !== 'admin'));
   };
 
   useEffect(() => {
+    // 1. Caricamento iniziale
     refresh();
+
+    // 2. Polling: Controlla ogni 2 secondi se ci sono cambiamenti nel localStorage
+    // Questo permette di vedere le registrazioni fatte in altre schede dello stesso browser
+    const intervalId = setInterval(() => {
+        refresh();
+    }, 2000);
+
+    return () => clearInterval(intervalId);
   }, []);
 
   const handleApprove = (email: string) => {
     approveUser(email);
-    refresh(); // Aggiorna UI immediatamente
+    refresh(); 
   };
 
   const handleReject = (email: string) => {
@@ -28,9 +39,16 @@ export const AdminPanel: React.FC = () => {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+    <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden animate-fadeIn">
       <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-          <div className="text-sm font-medium text-slate-500">Richieste di Accesso</div>
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-medium text-slate-700">Richieste di Accesso</div>
+            {users.some(u => !u.isApproved) && (
+                <span className="bg-amber-100 text-amber-700 text-[10px] px-2 py-0.5 rounded-full font-bold border border-amber-200">
+                    {users.filter(u => !u.isApproved).length} in attesa
+                </span>
+            )}
+          </div>
           <button onClick={refresh} className="text-slate-400 hover:text-emerald-600 transition" title="Aggiorna lista">
               <RefreshCw size={16} />
           </button>
@@ -57,7 +75,10 @@ export const AdminPanel: React.FC = () => {
               {users.map((user) => (
                 <tr key={user.email} className="hover:bg-slate-50 transition">
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                    {new Date(user.registeredAt).toLocaleDateString()}
+                    <div className="flex items-center gap-2">
+                        <Clock size={14} className="text-slate-300"/>
+                        {new Date(user.registeredAt).toLocaleDateString()}
+                    </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-700">
                     {user.fullName}
@@ -83,7 +104,7 @@ export const AdminPanel: React.FC = () => {
                           className="text-emerald-600 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 p-2 rounded-lg transition"
                           title="Approva Accesso"
                         >
-                          <Check size={18} />
+                          <Check size={18} /> Approva
                         </button>
                     )}
                     <button

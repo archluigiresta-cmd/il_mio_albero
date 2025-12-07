@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { User } from '../types';
+import { getStoredUsers } from '../services/storageService';
 import { 
   LayoutDashboard, 
   Network, 
@@ -20,15 +21,37 @@ interface SidebarProps {
 }
 
 export const DashboardSidebar: React.FC<SidebarProps> = ({ user, currentView, onChangeView, onLogout }) => {
-  
-  const menuItems = [
+  const [pendingCount, setPendingCount] = useState(0);
+
+  // Controllo periodico per utenti in attesa (badge notifica)
+  useEffect(() => {
+    if (user.role !== 'admin') return;
+
+    const checkPending = () => {
+        const users = getStoredUsers();
+        const pending = users.filter(u => !u.isApproved && u.role !== 'admin').length;
+        setPendingCount(pending);
+    };
+
+    checkPending();
+    const interval = setInterval(checkPending, 3000);
+    return () => clearInterval(interval);
+  }, [user.role]);
+
+  const menuItems: { id: string; label: string; icon: any; badge?: number }[] = [
     { id: 'tree', label: 'Albero Genealogico', icon: Network },
-    // { id: 'list', label: 'Elenco Persone', icon: FileText }, // Placeholder per implementazioni future
+    // { id: 'list', label: 'Elenco Persone', icon: FileText }, 
   ];
 
   if (user.role === 'admin') {
     menuItems.push({ id: 'add_person', label: 'Nuova Persona', icon: UserPlus });
-    menuItems.push({ id: 'admin_users', label: 'Gestione Utenti', icon: Users });
+    // Menu item speciale per utenti
+    menuItems.push({ 
+        id: 'admin_users', 
+        label: 'Gestione Utenti', 
+        icon: Users,
+        badge: pendingCount > 0 ? pendingCount : undefined
+    });
     menuItems.push({ id: 'admin_settings', label: 'Impostazioni & Dati', icon: Settings });
   }
 
@@ -69,14 +92,21 @@ export const DashboardSidebar: React.FC<SidebarProps> = ({ user, currentView, on
           <button
             key={item.id}
             onClick={() => onChangeView(item.id)}
-            className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-all duration-200 ${
+            className={`w-full flex items-center justify-between px-3 py-3 rounded-lg text-sm font-medium transition-all duration-200 ${
               currentView === item.id 
                 ? 'bg-emerald-600/10 text-emerald-400 border border-emerald-600/20' 
                 : 'hover:bg-slate-800 hover:text-white'
             }`}
           >
-            <item.icon size={18} />
-            {item.label}
+            <div className="flex items-center gap-3">
+                <item.icon size={18} />
+                {item.label}
+            </div>
+            {item.badge && (
+                <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full animate-pulse">
+                    {item.badge}
+                </span>
+            )}
           </button>
         ))}
       </nav>
@@ -91,7 +121,7 @@ export const DashboardSidebar: React.FC<SidebarProps> = ({ user, currentView, on
           Disconnetti
         </button>
         <div className="mt-4 text-center text-[10px] text-slate-600">
-            v1.2.0 &bull; Famiglia Resta
+            v1.2.1 &bull; Famiglia Resta
         </div>
       </div>
     </div>
