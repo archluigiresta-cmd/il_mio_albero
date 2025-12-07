@@ -5,14 +5,15 @@ import { getStoredPeople, savePeople, getSession, loginUser, registerUser, logou
 import { FamilyTree } from './components/FamilyTree';
 import { PersonEditor } from './components/PersonEditor';
 import { AdminPanel } from './components/AdminPanel';
+import { DashboardSidebar } from './components/DashboardSidebar';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { Upload, Plus, TreeDeciduous, Shield, LogOut, LayoutDashboard, User as UserIcon, FilePlus } from 'lucide-react';
+import { Upload, TreeDeciduous, Shield, User as UserIcon, FilePlus, Save } from 'lucide-react';
 
 const AppContent: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
-  const [view, setView] = useState<'tree' | 'admin'>('tree');
+  const [currentView, setCurrentView] = useState('tree'); // 'tree', 'admin_users', 'admin_settings', 'add_person'
 
   // Stati per Auth
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
@@ -110,19 +111,35 @@ const AppContent: React.FC = () => {
   const handleCreateNew = () => {
       const newP: Person = {
           id: `@I${Date.now()}@`,
-          firstName: 'Nuova',
-          lastName: 'Persona',
+          firstName: '',
+          lastName: '',
           gender: Gender.Unknown,
           isLiving: true,
           spouseIds: [],
           childrenIds: []
       };
-      setPeople(prev => [...prev, newP]);
+      // Apriamo direttamente l'editor in modalità "nuovo"
+      // Non lo aggiungiamo all'array people finché non viene salvato
       setSelectedPerson(newP);
   };
 
-  const handleUpdate = (p: Person) => {
-      setPeople(prev => prev.map(x => x.id === p.id ? p : x));
+  const handleSavePerson = (p: Person) => {
+      // Verifica se esiste
+      const exists = people.find(x => x.id === p.id);
+      if (exists) {
+          setPeople(prev => prev.map(x => x.id === p.id ? p : x));
+      } else {
+          // Nuova persona
+          // Rinomina "Nuova Persona" se l'utente non l'ha fatto
+          const finalP = {
+               ...p,
+               firstName: p.firstName || 'Sconosciuto',
+               lastName: p.lastName || ''
+          };
+          setPeople(prev => [...prev, finalP]);
+      }
+      setSelectedPerson(null);
+      setCurrentView('tree'); // Torna all'albero dopo il salvataggio
   };
 
   const handleDelete = (id: string) => {
@@ -131,34 +148,36 @@ const AppContent: React.FC = () => {
   };
 
   const handleAddRelative = (type: string, sourceId: string) => {
-      alert("Per aggiungere un parente: \n1. Crea una nuova persona con il tasto '+' in alto a destra.\n2. Apri la nuova persona e usa i campi 'Padre/Madre/Coniuge' per collegarla.");
+      alert("Per aggiungere un parente: \n1. Usa il menù 'Nuova Persona' per creare il parente.\n2. Poi collega i due usando i campi Relazione nella scheda.");
   };
 
   // --- SCHERMATA DI LOGIN ---
   if (!user) {
-      if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50">Caricamento...</div>;
+      if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500">Inizializzazione sistema...</div>;
 
       return (
-          <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-slate-100 to-emerald-50 p-4 font-sans">
-              <div className="bg-white p-8 rounded-xl shadow-xl w-full max-w-sm border border-slate-200">
+          <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-slate-800 to-slate-900 p-4 font-sans text-slate-100">
+              <div className="bg-white text-slate-800 p-8 rounded-xl shadow-2xl w-full max-w-sm border border-slate-700">
                   <div className="flex justify-center mb-6">
-                      <div className="p-3 bg-emerald-100 rounded-full">
-                        <TreeDeciduous size={40} className="text-emerald-700" />
+                      <div className="p-4 bg-emerald-600 rounded-xl shadow-lg transform -translate-y-12">
+                        <TreeDeciduous size={48} className="text-white" />
                       </div>
                   </div>
-                  <h1 className="text-2xl font-serif font-bold mb-2 text-center text-slate-800">
-                      Genealogia Resta
-                  </h1>
-                  <p className="text-center text-slate-500 mb-8 text-sm">
-                      Accesso riservato alla famiglia
-                  </p>
+                  <div className="-mt-8 text-center mb-8">
+                      <h1 className="text-2xl font-serif font-bold text-slate-900">
+                          Genealogia Resta
+                      </h1>
+                      <p className="text-slate-500 text-sm mt-1">
+                          Accesso Riservato
+                      </p>
+                  </div>
                   
                   <form onSubmit={authMode === 'login' ? handleLogin : handleRegister} className="flex flex-col gap-4">
                       {authMode === 'register' && (
                           <div className="relative">
                             <UserIcon className="absolute left-3 top-3.5 text-slate-400" size={18} />
                             <input 
-                                className="border p-3 pl-10 rounded-lg bg-slate-50 w-full focus:ring-2 focus:ring-emerald-500 outline-none" 
+                                className="border border-slate-300 p-3 pl-10 rounded-lg bg-slate-50 w-full focus:ring-2 focus:ring-emerald-500 outline-none transition" 
                                 placeholder="Nome e Cognome" 
                                 value={fullName} 
                                 onChange={e=>setFullName(e.target.value)} 
@@ -167,7 +186,7 @@ const AppContent: React.FC = () => {
                           </div>
                       )}
                       <input 
-                        className="border p-3 rounded-lg bg-slate-50 focus:ring-2 focus:ring-emerald-500 outline-none" 
+                        className="border border-slate-300 p-3 rounded-lg bg-slate-50 focus:ring-2 focus:ring-emerald-500 outline-none transition" 
                         placeholder="Email" 
                         type="email" 
                         value={email} 
@@ -175,7 +194,7 @@ const AppContent: React.FC = () => {
                         required 
                       />
                       <input 
-                        className="border p-3 rounded-lg bg-slate-50 focus:ring-2 focus:ring-emerald-500 outline-none" 
+                        className="border border-slate-300 p-3 rounded-lg bg-slate-50 focus:ring-2 focus:ring-emerald-500 outline-none transition" 
                         placeholder="Password" 
                         type="password" 
                         value={password} 
@@ -183,152 +202,154 @@ const AppContent: React.FC = () => {
                         required 
                       />
                       
-                      <button className="bg-emerald-700 text-white p-3 rounded-lg font-semibold hover:bg-emerald-800 transition shadow-md mt-2">
-                          {authMode === 'login' ? 'Accedi' : 'Registrati'}
+                      <button className="bg-emerald-700 hover:bg-emerald-800 text-white p-3 rounded-lg font-semibold transition shadow-md mt-2 flex justify-center items-center gap-2">
+                          {authMode === 'login' ? 'Entra nel Portale' : 'Invia Registrazione'}
                       </button>
                   </form>
 
-                  <div className="mt-6 flex justify-center text-sm">
-                      <button onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')} className="text-emerald-700 hover:underline font-medium">
+                  <div className="mt-6 flex justify-center text-sm border-t pt-4 border-slate-100">
+                      <button onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')} className="text-emerald-700 hover:text-emerald-900 font-medium">
                           {authMode === 'login' ? 'Non hai un account? Registrati' : 'Hai già un account? Accedi'}
                       </button>
                   </div>
               </div>
-              <div className="mt-8 text-xs text-slate-400">
-                  &copy; {new Date().getFullYear()} Famiglia Resta
+              <div className="mt-8 text-xs text-slate-500 opacity-60">
+                  Sistema di archiviazione genealogica privata
               </div>
           </div>
       );
   }
 
-  // --- APPLICAZIONE PRINCIPALE ---
+  // --- LAYOUT DASHBOARD ---
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-slate-50 text-slate-900 font-sans">
-       {/* HEADER */}
-       <header className="h-16 border-b bg-white shadow-sm flex items-center justify-between px-4 md:px-6 shrink-0 z-20">
-           <div className="flex items-center gap-2 text-emerald-800 cursor-pointer" onClick={() => setView('tree')}>
-               <TreeDeciduous className="text-emerald-600" />
-               <span className="font-serif font-bold text-lg md:text-xl tracking-tight hidden md:inline">Famiglia Resta</span>
-           </div>
+    <div className="flex h-screen overflow-hidden bg-slate-100 text-slate-900 font-sans">
+       
+       {/* SIDEBAR SINISTRA */}
+       <DashboardSidebar 
+            user={user} 
+            currentView={currentView} 
+            onChangeView={(v) => {
+                if (v === 'add_person') {
+                    handleCreateNew(); // Apre editor nuova persona
+                } else {
+                    setCurrentView(v);
+                    setSelectedPerson(null);
+                }
+            }}
+            onLogout={() => { logout(); setUser(null); }}
+       />
+
+       {/* CONTENUTO PRINCIPALE */}
+       <main className="flex-1 relative flex flex-col h-full overflow-hidden">
            
-           <div className="flex items-center gap-2 md:gap-4">
-               <div className="text-sm text-slate-600 hidden sm:flex flex-col items-end leading-tight">
-                   <span className="font-semibold">{user.fullName}</span>
-                   <span className="text-xs text-slate-400 capitalize">{user.role === 'admin' ? 'Amministratore' : 'Utente'}</span>
-               </div>
-               
-               {user.role === 'admin' && (
-                   <button 
-                     onClick={() => setView(view === 'tree' ? 'admin' : 'tree')} 
-                     className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition ${view === 'admin' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
-                     title={view === 'tree' ? "Vai alla Dashboard" : "Torna all'Albero"}
-                   >
-                       {view === 'tree' ? <><LayoutDashboard size={18} /><span className="hidden md:inline">Dashboard</span></> : <><TreeDeciduous size={18} /><span className="hidden md:inline">Albero</span></>}
-                   </button>
-               )}
-               
-               <div className="h-6 w-px bg-slate-200 mx-1"></div>
-
-               <button 
-                 onClick={() => { logout(); setUser(null); }} 
-                 className="p-2 text-slate-400 hover:text-red-600 transition rounded-full hover:bg-red-50"
-                 title="Esci"
-               >
-                   <LogOut size={20} />
-               </button>
-           </div>
-       </header>
-
-       {/* MAIN CONTENT */}
-       <main className="flex-1 relative overflow-hidden bg-slate-100">
-           {view === 'admin' ? (
-               <div className="h-full overflow-auto p-4 md:p-8">
-                   <AdminPanel />
-                   
-                   {/* Admin Utils aggiuntive */}
-                   <div className="max-w-4xl mx-auto mt-8 bg-white p-6 rounded shadow border-t-4 border-red-200">
-                        <h3 className="font-bold text-red-800 flex items-center gap-2 mb-4">
-                            <Shield size={20}/> Zona Pericolo
-                        </h3>
-                        <p className="text-sm text-slate-600 mb-4">Queste azioni sono irreversibili. Procedere con cautela.</p>
-                        <button 
-                            onClick={() => { if(confirm("Sei ASSOLUTAMENTE sicuro? Questo cancellerà tutti gli utenti e tutti i dati dell'albero.")) hardReset(); }} 
-                            className="bg-red-50 text-red-600 border border-red-200 px-4 py-2 rounded hover:bg-red-100 text-sm font-medium"
-                        >
-                            Reset Totale Applicazione
-                        </button>
-                   </div>
-               </div>
-           ) : (
+           {/* Vista: Albero Genealogico */}
+           {currentView === 'tree' && (
                <>
-                   {people.length === 0 ? (
+                  {people.length === 0 ? (
                        <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-6 p-4">
-                           <div className="bg-white p-8 rounded-2xl shadow-sm text-center max-w-md border border-slate-100">
+                           <div className="bg-white p-8 rounded-2xl shadow-sm text-center max-w-md border border-slate-200">
                                <TreeDeciduous size={64} className="mx-auto text-emerald-200 mb-4" />
                                <h2 className="text-xl font-bold text-slate-800 mb-2">L'albero è vuoto</h2>
-                               <p className="mb-6">
-                                   {user.role === 'admin' 
-                                     ? "Importa un file GEDCOM esistente oppure inizia a creare l'albero manualmente." 
-                                     : "L'amministratore non ha ancora caricato i dati della famiglia."}
+                               <p className="mb-6 text-sm">
+                                   Non ci sono ancora dati caricati.
                                </p>
-                               
                                {user.role === 'admin' && (
-                                   <div className="flex flex-col gap-3">
-                                       <label className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-lg cursor-pointer flex items-center justify-center gap-2 transition shadow">
-                                           <Upload size={18} />
-                                           Importa GEDCOM
-                                           <input type="file" accept=".ged" onChange={handleFileUpload} className="hidden" />
-                                       </label>
-                                       <span className="text-xs text-slate-400">- oppure -</span>
-                                       <button onClick={handleCreateNew} className="text-emerald-600 font-medium hover:underline">
-                                           Crea prima persona manualmente
-                                       </button>
-                                   </div>
+                                   <button 
+                                      onClick={handleCreateNew} 
+                                      className="bg-emerald-600 text-white px-6 py-3 rounded-lg hover:bg-emerald-700 transition w-full"
+                                   >
+                                      Inserisci prima persona
+                                   </button>
                                )}
                            </div>
                        </div>
                    ) : (
-                       <>
-                           {/* TOOLBAR ALBERO */}
-                           <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
-                               {user.role === 'admin' && (
-                                   <label className="bg-white p-3 rounded-full shadow-lg cursor-pointer text-slate-600 hover:text-emerald-600 transition hover:scale-105" title="Importa / Unisci GEDCOM">
-                                       <FilePlus size={20} />
-                                       <input type="file" accept=".ged" onChange={handleFileUpload} className="hidden" />
-                                   </label>
-                               )}
-                               <button 
-                                 onClick={handleCreateNew} 
-                                 className="bg-emerald-600 p-3 rounded-full shadow-lg text-white hover:bg-emerald-700 transition hover:scale-105"
-                                 title="Aggiungi Persona"
-                               >
-                                   <Plus size={20}/>
-                               </button>
-                           </div>
-
+                       <div className="h-full w-full relative">
                            <FamilyTree 
                                data={people} 
                                onSelectPerson={setSelectedPerson} 
                                selectedPersonId={selectedPerson?.id} 
                            />
-                       </>
+                       </div>
                    )}
                </>
            )}
-       </main>
 
-       {/* SIDEBAR EDITOR */}
-       {selectedPerson && (
-           <PersonEditor 
-               person={selectedPerson} 
-               allPeople={people} 
-               onSave={handleUpdate} 
-               onClose={() => setSelectedPerson(null)}
-               onAddRelative={handleAddRelative}
-               onDelete={handleDelete}
-               isAdmin={user.role === 'admin'}
-           />
-       )}
+           {/* Vista: Gestione Utenti (Admin) */}
+           {currentView === 'admin_users' && (
+               <div className="h-full overflow-auto p-8 bg-slate-100">
+                   <div className="max-w-5xl mx-auto">
+                       <h2 className="text-2xl font-serif font-bold text-slate-800 mb-6">Gestione Utenti</h2>
+                       <AdminPanel key={Date.now()} /> 
+                       {/* key=Date.now() forza il refresh del componente quando si entra nella vista */}
+                   </div>
+               </div>
+           )}
+
+            {/* Vista: Impostazioni (Admin) */}
+            {currentView === 'admin_settings' && (
+               <div className="h-full overflow-auto p-8 bg-slate-100">
+                   <div className="max-w-4xl mx-auto space-y-8">
+                       <h2 className="text-2xl font-serif font-bold text-slate-800 mb-4">Impostazioni & Dati</h2>
+                       
+                       <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
+                           <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
+                               <Upload size={20}/> Importazione Dati
+                           </h3>
+                           <p className="text-sm text-slate-500 mb-4">
+                               Carica un file GEDCOM standard per popolare o aggiornare l'albero. 
+                               Se l'albero contiene già dati, ti verrà chiesto se unire o sostituire.
+                           </p>
+                           <label className="inline-flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded border border-slate-300 cursor-pointer transition">
+                               <FilePlus size={18} />
+                               Seleziona File .ged
+                               <input type="file" accept=".ged" onChange={handleFileUpload} className="hidden" />
+                           </label>
+                       </div>
+
+                       <div className="bg-white p-6 rounded-lg shadow-sm border border-red-100">
+                            <h3 className="font-bold text-red-800 flex items-center gap-2 mb-4">
+                                <Shield size={20}/> Zona Pericolo
+                            </h3>
+                            <p className="text-sm text-slate-600 mb-4">
+                                Azioni distruttive e irreversibili.
+                            </p>
+                            <button 
+                                onClick={() => { if(confirm("Sei ASSOLUTAMENTE sicuro? Questo cancellerà tutti gli utenti e tutti i dati dell'albero.")) hardReset(); }} 
+                                className="bg-red-50 text-red-600 border border-red-200 px-4 py-2 rounded hover:bg-red-100 text-sm font-medium"
+                            >
+                                Reset Totale Applicazione
+                            </button>
+                       </div>
+                   </div>
+               </div>
+           )}
+
+           {/* Editor / Sidebar a comparsa per Dettagli o Nuova Persona */}
+           {(selectedPerson || currentView === 'add_person') && (
+               <PersonEditor 
+                   person={selectedPerson || {
+                        id: `@I${Date.now()}@`,
+                        firstName: '',
+                        lastName: '',
+                        gender: Gender.Unknown,
+                        isLiving: true,
+                        spouseIds: [],
+                        childrenIds: []
+                   }} 
+                   allPeople={people} 
+                   onSave={handleSavePerson} 
+                   onClose={() => {
+                       setSelectedPerson(null);
+                       if(currentView === 'add_person') setCurrentView('tree');
+                   }}
+                   onAddRelative={handleAddRelative}
+                   onDelete={handleDelete}
+                   isAdmin={user.role === 'admin'}
+               />
+           )}
+
+       </main>
     </div>
   );
 };

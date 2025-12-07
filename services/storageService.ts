@@ -3,7 +3,9 @@ import { ADMIN_EMAIL, ADMIN_PASSWORD } from '../constants';
 
 const KEY_DATA = 'genealogy_data_v1';
 const KEY_USERS = 'genealogy_users_v1';
-const KEY_SESSION = 'genealogy_session_v1';
+// CAMBIAMENTO: Usiamo sessionStorage per la sessione attiva. 
+// Chiudendo il browser l'utente viene disconnesso.
+const KEY_SESSION = 'genealogy_session_active'; 
 
 // --- Data Management ---
 
@@ -21,6 +23,7 @@ const sanitizePerson = (p: any): Person => {
     birthPlace: p.birthPlace || '',
     deathDate: p.deathDate || '',
     deathPlace: p.deathPlace || '',
+    photoUrl: p.photoUrl || '',
     notes: p.notes || '',
     spouseIds: Array.isArray(p.spouseIds) ? p.spouseIds : [],
     childrenIds: Array.isArray(p.childrenIds) ? p.childrenIds : [],
@@ -56,6 +59,7 @@ export const savePeople = (people: Person[]) => {
 
 export const hardReset = () => {
     localStorage.clear();
+    sessionStorage.clear();
     window.location.reload();
 }
 
@@ -86,7 +90,13 @@ const saveUsers = (users: User[]) => {
 
 export const approveUser = (email: string) => {
     const users = getStoredUsers();
-    const updated = users.map(u => u.email === email ? { ...u, isApproved: true } : u);
+    // Trova e aggiorna
+    const updated = users.map(u => {
+        if (u.email === email) {
+            return { ...u, isApproved: true };
+        }
+        return u;
+    });
     saveUsers(updated);
 };
 
@@ -108,7 +118,7 @@ export const loginUser = (email: string, password: string): { success: boolean, 
             isApproved: true, 
             registeredAt: new Date().toISOString() 
         };
-        localStorage.setItem(KEY_SESSION, JSON.stringify(adminUser));
+        sessionStorage.setItem(KEY_SESSION, JSON.stringify(adminUser));
         return { success: true, user: adminUser };
     }
 
@@ -129,11 +139,10 @@ export const loginUser = (email: string, password: string): { success: boolean, 
     }
 
     // Success
-    // (In una app reale non salveremmo la password in sessione, qui puliamo l'oggetto)
     const sessionUser = { ...user };
     delete sessionUser.password; 
     
-    localStorage.setItem(KEY_SESSION, JSON.stringify(sessionUser));
+    sessionStorage.setItem(KEY_SESSION, JSON.stringify(sessionUser));
     return { success: true, user: sessionUser };
 };
 
@@ -159,12 +168,14 @@ export const registerUser = (email: string, password: string, fullName: string) 
 };
 
 export const logout = () => {
-    localStorage.removeItem(KEY_SESSION);
+    sessionStorage.removeItem(KEY_SESSION);
+    // Opzionale: ricarica la pagina per pulire lo stato React
+    window.location.reload();
 };
 
 export const getSession = (): User | null => {
     try {
-        const s = localStorage.getItem(KEY_SESSION);
+        const s = sessionStorage.getItem(KEY_SESSION);
         return s ? JSON.parse(s) : null;
     } catch {
         return null;

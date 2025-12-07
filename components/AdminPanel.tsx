@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { User } from '../types';
 import { getStoredUsers, approveUser, deleteUser } from '../services/storageService';
-import { Check, X, Shield } from 'lucide-react';
+import { Check, X, Shield, RefreshCw } from 'lucide-react';
 
 export const AdminPanel: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
 
   const refresh = () => {
+    // Rimuovi l'admin dalla lista visualizzata per pulizia
     setUsers(getStoredUsers().filter(u => u.role !== 'admin'));
   };
 
@@ -16,7 +17,7 @@ export const AdminPanel: React.FC = () => {
 
   const handleApprove = (email: string) => {
     approveUser(email);
-    refresh();
+    refresh(); // Aggiorna UI immediatamente
   };
 
   const handleReject = (email: string) => {
@@ -27,49 +28,50 @@ export const AdminPanel: React.FC = () => {
   };
 
   return (
-    <div className="p-6 bg-white rounded shadow max-w-4xl mx-auto mt-10">
-      <div className="flex items-center gap-3 mb-6">
-        <Shield className="text-blue-600" size={32} />
-        <h2 className="text-2xl font-serif font-bold text-gray-800">Pannello Amministratore</h2>
+    <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+      <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+          <div className="text-sm font-medium text-slate-500">Richieste di Accesso</div>
+          <button onClick={refresh} className="text-slate-400 hover:text-emerald-600 transition" title="Aggiorna lista">
+              <RefreshCw size={16} />
+          </button>
       </div>
-      
-      <p className="mb-4 text-gray-600">Gestisci le richieste di accesso all'applicazione.</p>
 
       {users.length === 0 ? (
-        <div className="text-center py-10 bg-gray-50 rounded text-gray-500">
-            Nessun utente registrato in attesa.
+        <div className="text-center py-12 text-slate-400">
+            <Shield size={48} className="mx-auto mb-3 opacity-20" />
+            <p>Nessun utente registrato (oltre all'admin).</p>
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+          <table className="min-w-full divide-y divide-slate-100">
+            <thead className="bg-white">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data Reg.</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nome</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stato</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Azioni</th>
+                <th className="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">Data</th>
+                <th className="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">Nome Utente</th>
+                <th className="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">Email</th>
+                <th className="px-6 py-3 text-left text-xs font-bold text-slate-400 uppercase tracking-wider">Stato</th>
+                <th className="px-6 py-3 text-right text-xs font-bold text-slate-400 uppercase tracking-wider">Azioni</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="bg-white divide-y divide-slate-50">
               {users.map((user) => (
-                <tr key={user.email}>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                <tr key={user.email} className="hover:bg-slate-50 transition">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
                     {new Date(user.registeredAt).toLocaleDateString()}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-700">
                     {user.fullName}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500 font-mono">
                     {user.email}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     {user.isApproved ? (
-                      <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                      <span className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
                         Attivo
                       </span>
                     ) : (
-                      <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
+                      <span className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-amber-100 text-amber-800 border border-amber-200 animate-pulse">
                         In Attesa
                       </span>
                     )}
@@ -78,16 +80,16 @@ export const AdminPanel: React.FC = () => {
                     {!user.isApproved && (
                         <button
                           onClick={() => handleApprove(user.email)}
-                          className="text-green-600 hover:text-green-900 bg-green-50 p-1 rounded"
-                          title="Approva"
+                          className="text-emerald-600 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 p-2 rounded-lg transition"
+                          title="Approva Accesso"
                         >
                           <Check size={18} />
                         </button>
                     )}
                     <button
                       onClick={() => handleReject(user.email)}
-                      className="text-red-600 hover:text-red-900 bg-red-50 p-1 rounded"
-                      title="Elimina"
+                      className="text-red-600 hover:text-red-900 bg-red-50 hover:bg-red-100 p-2 rounded-lg transition"
+                      title="Elimina Utente"
                     >
                       <X size={18} />
                     </button>
