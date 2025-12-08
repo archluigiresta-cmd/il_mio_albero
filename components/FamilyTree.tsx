@@ -238,8 +238,9 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       const FONT_SIZE_NAME = isMobile ? "12px" : "14px";
       const FONT_SIZE_DATE = isMobile ? "9px" : "10px";
       
-      const H_GAP = isMobile ? 15 : 40;
-      const V_GAP = isMobile ? 80 : 120;
+      // GAP OTTIMIZZATO PER DISTANZIARE LE CASELLE
+      const H_GAP = isMobile ? 50 : 120; 
+      const V_GAP = isMobile ? 100 : 150;
 
       const svg = d3.select(svgRef.current);
       svg.selectAll("*").remove();
@@ -257,7 +258,20 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       
       const treeLayout = d3.tree<HierarchyNode>()
           .nodeSize([CARD_WIDTH + H_GAP, CARD_HEIGHT + V_GAP])
-          .separation((a, b) => a.parent === b.parent ? 1.05 : 1.25);
+          .separation((a, b) => {
+              // Logica Avanzata: Considera se i nodi hanno coniugi (doppia larghezza)
+              const aIsWide = !!a.data.spouse;
+              const bIsWide = !!b.data.spouse;
+              
+              // Se entrambi sono "doppi" (con coniuge), serve più spazio
+              // Se uno è doppio e l'altro singolo, serve spazio medio
+              let baseSep = 1.2;
+              if (aIsWide && bIsWide) baseSep = 2.2;
+              else if (aIsWide || bIsWide) baseSep = 1.8;
+
+              // Se non sono fratelli (cugini), aggiungi ulteriore spazio per distinguere i rami
+              return a.parent === b.parent ? baseSep : baseSep + 0.6;
+          });
 
       treeLayout(root);
 
