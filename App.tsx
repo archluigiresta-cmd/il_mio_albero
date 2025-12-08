@@ -235,7 +235,7 @@ const AppContent: React.FC = () => {
               {/* Footer e Reset */}
               <div className="mt-8 flex flex-col items-center gap-2">
                   <div className="text-xs text-slate-500 opacity-60">
-                      Sistema di archiviazione genealogica privata
+                      Sistema di archiviazione genealogica privata • v{APP_VERSION}
                   </div>
                   <button 
                     onClick={() => { if(confirm("Questo cancellerà tutti i dati locali per risolvere problemi di accesso. Continuare?")) hardReset(); }} 
