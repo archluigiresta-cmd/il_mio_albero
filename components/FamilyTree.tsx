@@ -40,8 +40,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
   
   const [rootId, setRootId] = useState<string | null>(null);
   
-  // Modifica v1.5.1: Gestione espansione.
-  // Invece di partire vuoto, partirà pieno.
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   
   // Ricerca
@@ -94,7 +92,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       if (data.length > expandedIds.size && rootId) {
            expandAll(data);
       }
-  }, [data, rootId]); // Rimosso expandedIds dalle dipendenze per evitare loop
+  }, [data, rootId]); 
 
   // Se cambio modalità filtro in nucleo, imposto la radice sulla persona selezionata (se c'è)
   useEffect(() => {
@@ -180,7 +178,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
           }
 
           // Espansione nodi
-          // Logica v1.5.1: Se filterMode è 'all', controlliamo expandedIds (che ora parte pieno).
           const isExpanded = filterMode !== 'all' ? true : (expandedIds.has(id) || depth === 0);
           const hasChildren = p.childrenIds.length > 0;
 
@@ -250,12 +247,10 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       const g = svg.append("g");
 
       const zoom = d3.zoom<SVGSVGElement, unknown>()
-          .scaleExtent([0.05, 2.5]) // Aumentato zoom out per alberi grandi
+          .scaleExtent([0.05, 2.5]) 
           .on("zoom", (e) => g.attr("transform", e.transform));
       
-      // Posizione iniziale ottimizzata
       const initialY = viewMode === 'ancestors' ? height - 150 : 80;
-      // Zoom iniziale leggermente più lontano per vedere più "spacchettato"
       svg.call(zoom).call(zoom.transform, d3.zoomIdentity.translate(width/2, initialY).scale(isMobile ? 0.5 : 0.7));
 
       const root = d3.hierarchy<HierarchyNode>(treeData);
@@ -305,10 +300,12 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
           
           const showSpouse = !!s && viewMode !== 'ancestors';
           const totalWidth = showSpouse ? (CARD_WIDTH * 2) + 20 : CARD_WIDTH;
-          const isSelected = p.id === selectedPersonId;
+          
+          // Is selected check (parent or spouse)
+          const isSelected = p.id === selectedPersonId || (s && s.id === selectedPersonId);
           const isHighlight = d.data.isDirectLine && filterMode === 'direct_line';
 
-          // Box
+          // Box Sfondo (Visual Only - No Click)
           gNode.append("rect")
              .attr("x", -totalWidth / 2)
              .attr("y", -CARD_HEIGHT / 2)
@@ -318,15 +315,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
              .attr("fill", isHighlight ? "#ecfdf5" : "white")
              .attr("stroke", isSelected ? "#059669" : (isHighlight ? "#6ee7b7" : "#cbd5e1"))
              .attr("stroke-width", isSelected ? 3 : (isHighlight ? 2 : 1))
-             .style("filter", "drop-shadow(0 4px 6px rgba(0,0,0,0.05))")
-             .style("cursor", "pointer")
-             .on("click", (e) => {
-                 e.stopPropagation();
-                 onSelectPerson(p);
-                 if (filterMode === 'nuclear') {
-                     setRootId(p.id);
-                 }
-             });
+             .style("filter", "drop-shadow(0 4px 6px rgba(0,0,0,0.05))");
 
           const drawPersonInfo = (person: Person, centerX: number) => {
              gNode.append("text")
@@ -337,6 +326,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 .style("font-family", "Inter, sans-serif")
                 .style("font-size", FONT_SIZE_NAME)
                 .style("fill", "#1e293b")
+                .style("pointer-events", "none") // Ensure clicks pass through to rect
                 .text(person.firstName);
             
              gNode.append("text")
@@ -346,6 +336,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 .style("font-family", "Inter, sans-serif")
                 .style("font-size", FONT_SIZE_NAME)
                 .style("fill", "#1e293b")
+                .style("pointer-events", "none")
                 .text(person.lastName);
 
              gNode.append("text")
@@ -354,23 +345,79 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 .attr("text-anchor", "middle")
                 .style("font-size", FONT_SIZE_DATE)
                 .style("fill", "#64748b")
+                .style("pointer-events", "none")
                 .text(person.birthDate ? person.birthDate.split(' ').pop() : '');
 
              gNode.append("circle")
                 .attr("cx", centerX - (isMobile ? 40 : 60))
                 .attr("cy", -CARD_HEIGHT/2 + 12)
                 .attr("r", isMobile ? 3 : 4)
-                .attr("fill", person.gender === Gender.Male ? "#3b82f6" : "#ec4899");
+                .attr("fill", person.gender === Gender.Male ? "#3b82f6" : "#ec4899")
+                .style("pointer-events", "none");
           };
 
-          if (showSpouse) {
+          if (showSpouse && s) {
               drawPersonInfo(p, -totalWidth/4);
               drawPersonInfo(s, totalWidth/4);
-              gNode.append("line").attr("x1", 0).attr("y1", -CARD_HEIGHT/2 + 10).attr("x2", 0).attr("y2", CARD_HEIGHT/2 - 10).attr("stroke", "#e2e8f0");
+              
+              // Divider Line
+              gNode.append("line")
+                .attr("x1", 0)
+                .attr("y1", -CARD_HEIGHT/2 + 10)
+                .attr("x2", 0)
+                .attr("y2", CARD_HEIGHT/2 - 10)
+                .attr("stroke", "#e2e8f0");
+              
+              // & Icon
               gNode.append("circle").attr("r", isMobile ? 8 : 10).attr("fill", "white").attr("cy", 0);
               gNode.append("text").attr("y", isMobile ? 3 : 4).attr("text-anchor", "middle").style("font-size", "10px").style("fill", "#94a3b8").text("&");
+
+              // --- CLICK ZONES ---
+              
+              // Zone 1: Main Person (Left)
+              gNode.append("rect")
+                .attr("x", -totalWidth / 2)
+                .attr("y", -CARD_HEIGHT / 2)
+                .attr("width", totalWidth / 2)
+                .attr("height", CARD_HEIGHT)
+                .attr("fill", "transparent")
+                .style("cursor", "pointer")
+                .on("click", (e) => {
+                    e.stopPropagation();
+                    onSelectPerson(p);
+                    if (filterMode === 'nuclear') setRootId(p.id);
+                });
+
+              // Zone 2: Spouse (Right)
+              gNode.append("rect")
+                .attr("x", 0) // Starts at center
+                .attr("y", -CARD_HEIGHT / 2)
+                .attr("width", totalWidth / 2)
+                .attr("height", CARD_HEIGHT)
+                .attr("fill", "transparent")
+                .style("cursor", "pointer")
+                .on("click", (e) => {
+                    e.stopPropagation();
+                    onSelectPerson(s); // Select the spouse specifically!
+                });
+
           } else {
+              // Single Person Logic
               drawPersonInfo(p, 0);
+              
+              // Full Click Zone
+              gNode.append("rect")
+                .attr("x", -totalWidth / 2)
+                .attr("y", -CARD_HEIGHT / 2)
+                .attr("width", totalWidth)
+                .attr("height", CARD_HEIGHT)
+                .attr("fill", "transparent")
+                .style("cursor", "pointer")
+                .on("click", (e) => {
+                    e.stopPropagation();
+                    onSelectPerson(p);
+                    if (filterMode === 'nuclear') setRootId(p.id);
+                });
           }
 
           // Expand/Collapse Button (Only for 'all' mode)
@@ -385,7 +432,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                     toggleNode(p.id);
                 });
 
-              // Design bottone: ora il default è "Meno" (chiudi), perché è tutto aperto
               btnGroup.append("circle")
                 .attr("r", isMobile ? 8 : 10)
                 .attr("fill", hasVisibleChildren ? "#fff" : "#10b981")
@@ -393,10 +439,8 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 .attr("stroke-width", 1.5);
               
               if (hasVisibleChildren) {
-                 // Icona MENO (per chiudere)
                  btnGroup.append("path").attr("d", "M-3 0 H3").attr("stroke", "#64748b").attr("stroke-width", 2);
               } else {
-                 // Icona PIU (per riaprire)
                  btnGroup.append("path").attr("d", "M-3 0 H3 M0 -3 V3").attr("stroke", "white").attr("stroke-width", 2);
               }
           }
@@ -430,7 +474,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                              className="px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm border-b border-slate-50 last:border-0 flex justify-between items-center"
                              onClick={() => {
                                  setRootId(p.id);
-                                 // Non resetto expandedIds qui, così resta "tutto aperto"
                                  setShowSearch(false);
                                  setSearchText("");
                                  onSelectPerson(p); 
