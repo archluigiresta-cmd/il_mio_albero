@@ -8,7 +8,9 @@ import {
   Filter,
   Users,
   Maximize,
-  Minimize
+  Minimize,
+  BookUser,
+  GitFork
 } from 'lucide-react';
 
 interface FamilyTreeProps {
@@ -18,7 +20,7 @@ interface FamilyTreeProps {
 }
 
 type ViewType = 'descendants' | 'ancestors';
-type FilterType = 'all' | 'direct_line' | 'nuclear';
+type FilterType = 'all' | 'direct_line' | 'nuclear' | 'paternal_line' | 'maternal_line';
 
 interface HierarchyNode {
   id: string;
@@ -26,7 +28,7 @@ interface HierarchyNode {
   spouse?: Person;
   children: HierarchyNode[];
   hasHiddenChildren?: boolean;
-  isDirectLine?: boolean; // Per evidenziare il percorso
+  isDirectLine?: boolean; 
 }
 
 export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, selectedPersonId }) => {
@@ -39,7 +41,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
   const [filterMode, setFilterMode] = useState<FilterType>('all');
   
   const [rootId, setRootId] = useState<string | null>(null);
-  
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   
   // Ricerca
@@ -61,7 +62,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Funzione helper per espandere tutto
   const expandAll = (personList: Person[]) => {
       const allIds = new Set(personList.map(p => p.id));
       setExpandedIds(allIds);
@@ -75,31 +75,64 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       }
   };
 
-  // Inizializzazione Root e Espansione Totale
+  // Funzione per trovare il "Capostipite" di un ramo
+  const findOldestAncestor = (startId: string, line: 'father' | 'mother'): string => {
+      let current = data.find(p => p.id === startId);
+      if (!current) return startId;
+      
+      // Primo passo: scegli la direzione
+      if (line === 'father' && current.fatherId) current = data.find(p => p.id === current?.fatherId);
+      else if (line === 'mother' && current.motherId) current = data.find(p => p.id === current?.motherId);
+      
+      // Poi risali finché possibile (generalmente per linea paterna per convenzione cognome, o materna diretta)
+      while (current) {
+          if (line === 'father' && current.fatherId) {
+              const next = data.find(p => p.id === current?.fatherId);
+              if (next) current = next; else break;
+          } else if (line === 'mother' && current.fatherId) {
+             // Anche nel ramo materno, spesso si risale per padre una volta arrivati alla madre capostipite del ramo
+             const next = data.find(p => p.id === current?.fatherId);
+             if (next) current = next; else break;
+          } else {
+              break;
+          }
+      }
+      return current?.id || startId;
+  };
+
+  // Logica cambio Filtro
+  const handleFilterChange = (mode: FilterType) => {
+      setFilterMode(mode);
+      if (mode === 'all') {
+           expandAll(data);
+      }
+      
+      if (selectedPersonId) {
+          if (mode === 'nuclear') {
+              setRootId(selectedPersonId);
+          } else if (mode === 'paternal_line') {
+              const oldest = findOldestAncestor(selectedPersonId, 'father');
+              setRootId(oldest);
+              expandAll(data);
+          } else if (mode === 'maternal_line') {
+              const oldest = findOldestAncestor(selectedPersonId, 'mother');
+              setRootId(oldest);
+              expandAll(data);
+          }
+      }
+  };
+
+  // Inizializzazione Root
   useEffect(() => {
       if (!rootId && data.length > 0) {
-          // Seleziona il più anziano senza padre come root di default
           const roots = data.filter(p => !p.fatherId);
           const bestRoot = roots.length > 0 
             ? roots.sort((a, b) => (a.birthDate || '9999').localeCompare(b.birthDate || '9999'))[0] 
             : data[0];
-          
           setRootId(bestRoot.id);
-          // DI DEFAULT: Espandi TUTTO l'albero ("spacchettato")
           expandAll(data);
       }
-      // Se i dati cambiano (es. importazione), espandiamo i nuovi nodi
-      if (data.length > expandedIds.size && rootId) {
-           expandAll(data);
-      }
   }, [data, rootId]); 
-
-  // Se cambio modalità filtro in nucleo, imposto la radice sulla persona selezionata (se c'è)
-  useEffect(() => {
-      if (filterMode === 'nuclear' && selectedPersonId) {
-          setRootId(selectedPersonId);
-      }
-  }, [filterMode, selectedPersonId]);
 
   // Gestione Ricerca
   useEffect(() => {
@@ -116,8 +149,8 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
 
   const toggleNode = (id: string) => {
       const next = new Set(expandedIds);
-      if (next.has(id)) next.delete(id); // Comprimi
-      else next.add(id); // Espandi
+      if (next.has(id)) next.delete(id); 
+      else next.add(id);
       setExpandedIds(next);
   };
 
@@ -128,17 +161,13 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       else if (current?.motherId) setRootId(current.motherId);
   };
 
-  // --- HELPER PER LINEA DIRETTA ---
-  // Trova il percorso (Set di ID) dal root al target
   const getDirectLineIds = (root: string, target: string | undefined): Set<string> => {
       const ids = new Set<string>();
       if (!target) return ids;
-      
       let curr: Person | undefined = data.find(p => p.id === target);
       while (curr) {
           ids.add(curr.id);
           if (curr.id === root) break;
-          // Risali
           if (curr.fatherId) curr = data.find(p => p.id === curr.fatherId);
           else if (curr.motherId) curr = data.find(p => p.id === curr.motherId);
           else curr = undefined;
@@ -150,14 +179,12 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
   const treeData = useMemo(() => {
       if (!rootId) return null;
 
-      // Calcola ID linea diretta se necessario
       const directLineIds = filterMode === 'direct_line' ? getDirectLineIds(rootId, selectedPersonId) : new Set<string>();
 
       const buildDescendants = (id: string, depth: number): HierarchyNode | null => {
           const p = data.find(x => x.id === id);
           if (!p) return null;
 
-          // Filtro Linea Diretta:
           if (filterMode === 'direct_line' && selectedPersonId) {
              const isAncestorPath = directLineIds.has(id);
              if (id !== rootId && !isAncestorPath) {
@@ -166,19 +193,16 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
              }
           }
 
-          // Filtro Nucleo Familiare:
           if (filterMode === 'nuclear' && depth > 1) {
               return null;
           }
 
-          // Trova coniuge
           let spouse: Person | undefined;
           if (p.spouseIds.length > 0) {
               spouse = data.find(s => s.id === p.spouseIds[0]);
           }
 
-          // Espansione nodi
-          const isExpanded = filterMode !== 'all' ? true : (expandedIds.has(id) || depth === 0);
+          const isExpanded = (filterMode !== 'all' && filterMode !== 'paternal_line' && filterMode !== 'maternal_line') ? true : (expandedIds.has(id) || depth === 0);
           const hasChildren = p.childrenIds.length > 0;
 
           let childrenNodes: HierarchyNode[] = [];
@@ -229,8 +253,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       if (!treeData || !svgRef.current || !dimensions.width) return;
 
       const { width, height } = dimensions;
-
-      // --- LOGICA RESPONSIVE ---
       const isMobile = width < 640; 
       
       const CARD_WIDTH = isMobile ? 140 : 200;
@@ -238,9 +260,9 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       const FONT_SIZE_NAME = isMobile ? "12px" : "14px";
       const FONT_SIZE_DATE = isMobile ? "9px" : "10px";
       
-      // GAP OTTIMIZZATO PER DISTANZIARE LE CASELLE
-      const H_GAP = isMobile ? 50 : 120; 
-      const V_GAP = isMobile ? 100 : 150;
+      // SPAZIATURA AUMENTATA PER VISIBILITA' MIGLIORE
+      const H_GAP = isMobile ? 60 : 150; 
+      const V_GAP = isMobile ? 120 : 180;
 
       const svg = d3.select(svgRef.current);
       svg.selectAll("*").remove();
@@ -259,18 +281,14 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       const treeLayout = d3.tree<HierarchyNode>()
           .nodeSize([CARD_WIDTH + H_GAP, CARD_HEIGHT + V_GAP])
           .separation((a, b) => {
-              // Logica Avanzata: Considera se i nodi hanno coniugi (doppia larghezza)
               const aIsWide = !!a.data.spouse;
               const bIsWide = !!b.data.spouse;
-              
-              // Se entrambi sono "doppi" (con coniuge), serve più spazio
-              // Se uno è doppio e l'altro singolo, serve spazio medio
               let baseSep = 1.2;
-              if (aIsWide && bIsWide) baseSep = 2.2;
-              else if (aIsWide || bIsWide) baseSep = 1.8;
+              if (aIsWide && bIsWide) baseSep = 2.4; // Molto spazio tra coppie
+              else if (aIsWide || bIsWide) baseSep = 2.0;
 
-              // Se non sono fratelli (cugini), aggiungi ulteriore spazio per distinguere i rami
-              return a.parent === b.parent ? baseSep : baseSep + 0.6;
+              // Spazio extra tra rami diversi
+              return a.parent === b.parent ? baseSep : baseSep + 0.8;
           });
 
       treeLayout(root);
@@ -315,11 +333,10 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
           const showSpouse = !!s && viewMode !== 'ancestors';
           const totalWidth = showSpouse ? (CARD_WIDTH * 2) + 20 : CARD_WIDTH;
           
-          // Is selected check (parent or spouse)
           const isSelected = p.id === selectedPersonId || (s && s.id === selectedPersonId);
           const isHighlight = d.data.isDirectLine && filterMode === 'direct_line';
 
-          // Box Sfondo (Visual Only - No Click)
+          // Background
           gNode.append("rect")
              .attr("x", -totalWidth / 2)
              .attr("y", -CARD_HEIGHT / 2)
@@ -331,7 +348,14 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
              .attr("stroke-width", isSelected ? 3 : (isHighlight ? 2 : 1))
              .style("filter", "drop-shadow(0 4px 6px rgba(0,0,0,0.05))");
 
-          const drawPersonInfo = (person: Person, centerX: number) => {
+          // Helper to check if someone has parents in DB
+          const hasAncestors = (pid: string) => {
+              const person = data.find(x => x.id === pid);
+              return person && (person.fatherId || person.motherId);
+          };
+
+          const drawPersonInfo = (person: Person, centerX: number, isSpouseSide: boolean) => {
+             // Name
              gNode.append("text")
                 .attr("x", centerX)
                 .attr("y", -CARD_HEIGHT/2 + (isMobile ? 22 : 25))
@@ -340,7 +364,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 .style("font-family", "Inter, sans-serif")
                 .style("font-size", FONT_SIZE_NAME)
                 .style("fill", "#1e293b")
-                .style("pointer-events", "none") // Ensure clicks pass through to rect
+                .style("pointer-events", "none")
                 .text(person.firstName);
             
              gNode.append("text")
@@ -353,6 +377,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 .style("pointer-events", "none")
                 .text(person.lastName);
 
+             // Date
              gNode.append("text")
                 .attr("x", centerX)
                 .attr("y", CARD_HEIGHT/2 - (isMobile ? 8 : 10))
@@ -362,19 +387,41 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 .style("pointer-events", "none")
                 .text(person.birthDate ? person.birthDate.split(' ').pop() : '');
 
+             // Gender Dot
              gNode.append("circle")
                 .attr("cx", centerX - (isMobile ? 40 : 60))
                 .attr("cy", -CARD_HEIGHT/2 + 12)
                 .attr("r", isMobile ? 3 : 4)
                 .attr("fill", person.gender === Gender.Male ? "#3b82f6" : "#ec4899")
                 .style("pointer-events", "none");
+
+             // Ancestor Link Icon (Jump to Tree)
+             if (hasAncestors(person.id) && (viewMode === 'descendants')) {
+                 const jumpGroup = gNode.append("g")
+                    .attr("transform", `translate(${centerX + (isMobile ? 40 : 60)}, ${-CARD_HEIGHT/2 + 12})`)
+                    .style("cursor", "pointer")
+                    .on("click", (e) => {
+                        e.stopPropagation();
+                        // Jump logic: set root to this person (or their oldest ancestor)
+                        setRootId(findOldestAncestor(person.id, 'father'));
+                        onSelectPerson(person);
+                    });
+                 
+                 jumpGroup.append("circle").attr("r", 8).attr("fill", "#f1f5f9").attr("stroke", "#94a3b8");
+                 // Simple tree icon path
+                 jumpGroup.append("path")
+                    .attr("d", "M-3 2 L0 -2 L3 2 M0 -2 V4")
+                    .attr("stroke", "#475569")
+                    .attr("stroke-width", 1.5)
+                    .attr("fill", "none");
+                 jumpGroup.append("title").text("Vedi albero di origine");
+             }
           };
 
           if (showSpouse && s) {
-              drawPersonInfo(p, -totalWidth/4);
-              drawPersonInfo(s, totalWidth/4);
+              drawPersonInfo(p, -totalWidth/4, false);
+              drawPersonInfo(s, totalWidth/4, true);
               
-              // Divider Line
               gNode.append("line")
                 .attr("x1", 0)
                 .attr("y1", -CARD_HEIGHT/2 + 10)
@@ -382,13 +429,10 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 .attr("y2", CARD_HEIGHT/2 - 10)
                 .attr("stroke", "#e2e8f0");
               
-              // & Icon
               gNode.append("circle").attr("r", isMobile ? 8 : 10).attr("fill", "white").attr("cy", 0);
               gNode.append("text").attr("y", isMobile ? 3 : 4).attr("text-anchor", "middle").style("font-size", "10px").style("fill", "#94a3b8").text("&");
 
-              // --- CLICK ZONES ---
-              
-              // Zone 1: Main Person (Left)
+              // Click Zones
               gNode.append("rect")
                 .attr("x", -totalWidth / 2)
                 .attr("y", -CARD_HEIGHT / 2)
@@ -399,12 +443,10 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 .on("click", (e) => {
                     e.stopPropagation();
                     onSelectPerson(p);
-                    if (filterMode === 'nuclear') setRootId(p.id);
                 });
 
-              // Zone 2: Spouse (Right)
               gNode.append("rect")
-                .attr("x", 0) // Starts at center
+                .attr("x", 0)
                 .attr("y", -CARD_HEIGHT / 2)
                 .attr("width", totalWidth / 2)
                 .attr("height", CARD_HEIGHT)
@@ -412,14 +454,11 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 .style("cursor", "pointer")
                 .on("click", (e) => {
                     e.stopPropagation();
-                    onSelectPerson(s); // Select the spouse specifically!
+                    onSelectPerson(s);
                 });
 
           } else {
-              // Single Person Logic
-              drawPersonInfo(p, 0);
-              
-              // Full Click Zone
+              drawPersonInfo(p, 0, false);
               gNode.append("rect")
                 .attr("x", -totalWidth / 2)
                 .attr("y", -CARD_HEIGHT / 2)
@@ -430,12 +469,11 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 .on("click", (e) => {
                     e.stopPropagation();
                     onSelectPerson(p);
-                    if (filterMode === 'nuclear') setRootId(p.id);
                 });
           }
 
-          // Expand/Collapse Button (Only for 'all' mode)
-          if (filterMode === 'all' && viewMode === 'descendants' && p.childrenIds.length > 0) {
+          // Expand/Collapse
+          if ((filterMode === 'all' || filterMode === 'paternal_line' || filterMode === 'maternal_line') && viewMode === 'descendants' && p.childrenIds.length > 0) {
               const hasVisibleChildren = d.children && d.children.length > 0;
               const btnY = CARD_HEIGHT / 2;
               const btnGroup = gNode.append("g")
@@ -487,7 +525,12 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                              key={p.id}
                              className="px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm border-b border-slate-50 last:border-0 flex justify-between items-center"
                              onClick={() => {
-                                 setRootId(p.id);
+                                 // Smart Root Logic on Search
+                                 // If person has father, go to top father. Else self.
+                                 const smartRoot = findOldestAncestor(p.id, 'father');
+                                 setRootId(smartRoot);
+                                 setFilterMode('all'); // Reset filter to show context
+                                 expandAll(data);
                                  setShowSearch(false);
                                  setSearchText("");
                                  onSelectPerson(p); 
@@ -504,7 +547,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
           {/* VIEW MODE TOGGLE */}
           <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-1 pointer-events-auto flex flex-col gap-1">
               
-              {/* Direzione */}
               <div className="flex border-b border-slate-100 pb-1 mb-1">
                 <button 
                     onClick={() => setViewMode('descendants')}
@@ -520,44 +562,57 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 </button>
               </div>
 
-              {/* Filtri Tipologia */}
               {viewMode === 'descendants' && (
                   <div className="space-y-1">
                       <button 
-                        onClick={() => { setFilterMode('all'); expandAll(data); }}
+                        onClick={() => handleFilterChange('all')}
                         className={`w-full text-left px-3 py-2 rounded text-xs font-medium flex items-center gap-2 ${filterMode === 'all' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:bg-slate-50'}`}
                       >
                           <GitMerge size={14} className="rotate-90" />
-                          Albero Completo
+                          Tutti (Smart)
                       </button>
                       
                       <button 
                         onClick={() => {
-                            if(!selectedPersonId) alert("Seleziona prima una persona nell'albero per vederne la linea diretta.");
-                            else setFilterMode('direct_line');
+                            if(!selectedPersonId) alert("Seleziona una persona.");
+                            else handleFilterChange('paternal_line');
                         }}
-                        className={`w-full text-left px-3 py-2 rounded text-xs font-medium flex items-center gap-2 ${filterMode === 'direct_line' ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'text-slate-500 hover:bg-slate-50'}`}
+                        className={`w-full text-left px-3 py-2 rounded text-xs font-medium flex items-center gap-2 ${filterMode === 'paternal_line' ? 'bg-blue-50 text-blue-700 border border-blue-100' : 'text-slate-500 hover:bg-slate-50'}`}
+                        title="Mostra tutta la famiglia del ramo paterno della persona selezionata"
                       >
-                          <Filter size={14} />
-                          Solo Linea Diretta
+                          <BookUser size={14} />
+                          Ramo Paterno Completo
                       </button>
 
                       <button 
                         onClick={() => {
-                            if(!selectedPersonId) alert("Seleziona prima una persona.");
-                            else setFilterMode('nuclear');
+                            if(!selectedPersonId) alert("Seleziona una persona.");
+                            else handleFilterChange('maternal_line');
                         }}
-                        className={`w-full text-left px-3 py-2 rounded text-xs font-medium flex items-center gap-2 ${filterMode === 'nuclear' ? 'bg-blue-50 text-blue-700 border border-blue-100' : 'text-slate-500 hover:bg-slate-50'}`}
+                        className={`w-full text-left px-3 py-2 rounded text-xs font-medium flex items-center gap-2 ${filterMode === 'maternal_line' ? 'bg-pink-50 text-pink-700 border border-pink-100' : 'text-slate-500 hover:bg-slate-50'}`}
+                        title="Mostra tutta la famiglia del ramo materno della persona selezionata"
+                      >
+                          <GitFork size={14} />
+                          Ramo Materno Completo
+                      </button>
+                      
+                      <div className="border-t border-slate-100 my-1"></div>
+
+                      <button 
+                        onClick={() => {
+                            if(!selectedPersonId) alert("Seleziona prima una persona.");
+                            else handleFilterChange('nuclear');
+                        }}
+                        className={`w-full text-left px-3 py-2 rounded text-xs font-medium flex items-center gap-2 ${filterMode === 'nuclear' ? 'bg-amber-50 text-amber-700 border border-amber-100' : 'text-slate-500 hover:bg-slate-50'}`}
                       >
                           <Users size={14} />
-                          Nucleo Familiare (2 gen)
+                          Solo Nucleo (Focus)
                       </button>
                   </div>
               )}
           </div>
           
-          {/* Quick Expand/Collapse Tools */}
-           {viewMode === 'descendants' && filterMode === 'all' && (
+           {(filterMode === 'all' || filterMode === 'paternal_line' || filterMode === 'maternal_line') && viewMode === 'descendants' && (
                 <div className="flex gap-2 pointer-events-auto">
                     <button 
                         onClick={() => expandAll(data)} 
@@ -578,7 +633,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
 
       </div>
 
-      {/* BACK TO PARENT BUTTON */}
       {viewMode === 'descendants' && data.find(p => p.id === rootId)?.fatherId && filterMode !== 'nuclear' && (
           <div className="absolute top-4 right-4 z-10 pointer-events-auto">
               <button 
@@ -591,7 +645,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
           </div>
       )}
 
-      {/* SVG CANVAS */}
       <svg ref={svgRef} className="w-full h-full touch-none bg-[#f8fafc] cursor-grab active:cursor-grabbing">
           <defs>
               <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
