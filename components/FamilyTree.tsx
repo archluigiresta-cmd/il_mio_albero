@@ -6,6 +6,7 @@ import {
   Layers, 
   Users, 
   GitBranch,
+  Maximize,
   Edit2
 } from 'lucide-react';
 import { PLACEHOLDER_IMAGE } from '../constants';
@@ -17,14 +18,15 @@ interface FamilyTreeProps {
   onOpenEditor: (person: Person) => void;
 }
 
-type ViewMode = 'branches' | 'units' | 'generations';
+type ViewMode = 'all' | 'branches' | 'units' | 'generations';
+
+const VIRTUAL_ROOT_ID = 'VIRTUAL_ROOT';
 
 export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, selectedPersonId, onOpenEditor }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
-  const [viewMode, setViewMode] = useState<ViewMode>('branches');
-  const [searchText, setSearchText] = useState("");
+  const [viewMode, setViewMode] = useState<ViewMode>('all');
 
   useEffect(() => {
     const handleResize = () => {
@@ -50,10 +52,10 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
   };
 
   const treeData = useMemo(() => {
-    const activeRootId = selectedPersonId ? findRoot(selectedPersonId) : data[0]?.id;
-    if (!activeRootId) return null;
+    const build = (id: string, depth: number, visited = new Set()): any => {
+      if (visited.has(id)) return null;
+      visited.add(id);
 
-    const build = (id: string, depth: number): any => {
       const p = data.find(x => x.id === id);
       if (!p) return null;
       const spouse = data.find(s => p.spouseIds.includes(s.id));
@@ -67,10 +69,22 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
         id: p.id,
         person: p,
         spouse,
-        children: children.map(cid => build(cid, depth + 1)).filter(Boolean)
+        children: children.map(cid => build(cid, depth + 1, visited)).filter(Boolean)
       };
     };
 
+    if (viewMode === 'all') {
+        const roots = data.filter(p => !p.fatherId && !p.motherId);
+        const visitedGlobal = new Set();
+        return {
+            id: VIRTUAL_ROOT_ID,
+            person: { id: VIRTUAL_ROOT_ID, firstName: 'Root' } as Person,
+            children: roots.map(r => build(r.id, 0, visitedGlobal)).filter(Boolean)
+        };
+    }
+
+    const activeRootId = selectedPersonId ? findRoot(selectedPersonId) : data[0]?.id;
+    if (!activeRootId) return null;
     return build(activeRootId, 0);
   }, [data, selectedPersonId, viewMode]);
 
@@ -86,22 +100,20 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       .scaleExtent([0.05, 2])
       .on("zoom", (e) => g.attr("transform", e.transform));
     
-    svg.call(zoom).call(zoom.transform, d3.zoomIdentity.translate(width/2, 50).scale(0.5));
+    svg.call(zoom).call(zoom.transform, d3.zoomIdentity.translate(width/2, 50).scale(viewMode === 'all' ? 0.3 : 0.5));
 
     const root = d3.hierarchy(treeData);
     const nodeW = 220;
     const nodeH = 100;
     
-    // Spaziatura generosa per alberi profondi
-    const treeLayout = d3.tree().nodeSize([nodeW + 100, nodeH + 150]);
+    const treeLayout = d3.tree().nodeSize([nodeW + 120, nodeH + 160]);
     treeLayout(root);
 
     if (viewMode === 'generations') {
-        root.each(d => {
-            d.y = d.depth * 280; 
-        });
+        root.each(d => { d.y = d.depth * 280; });
     }
 
+    // Linee Ortogonali
     g.selectAll(".link")
       .data(root.links())
       .enter()
@@ -109,6 +121,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       .attr("fill", "none")
       .attr("stroke", "#cbd5e1")
       .attr("stroke-width", 1.5)
+      .attr("opacity", d => d.source.data.id === VIRTUAL_ROOT_ID ? 0 : 1)
       .attr("d", d => {
         const sx = d.source.x, sy = d.source.y;
         const tx = d.target.x, ty = d.target.y;
@@ -123,6 +136,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       .attr("transform", d => `translate(${d.x},${d.y})`);
 
     nodes.each(function(d: any) {
+      if (d.data.id === VIRTUAL_ROOT_ID) return;
       const gNode = d3.select(this);
       const p = d.data.person;
       const s = d.data.spouse;
@@ -143,13 +157,10 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
           .style("cursor", "pointer")
           .on("click", (e) => { e.stopPropagation(); onSelectPerson(person); });
 
-        // Generation Badge (G1, G2...)
+        // Badge Generazione
         const badge = card.append("g").attr("transform", `translate(${-nodeW/2}, ${-nodeH/2})`);
         badge.append("circle").attr("r", 12).attr("fill", "#64748b");
-        badge.append("text")
-           .attr("y", 4).attr("text-anchor", "middle")
-           .style("font-size", "9px").style("fill", "white").style("font-weight", "bold")
-           .text(`G${d.depth + 1}`);
+        badge.append("text").attr("y", 4).attr("text-anchor", "middle").style("font-size", "9px").style("fill", "white").style("font-weight", "bold").text(`G${d.depth}`);
 
         card.append("clipPath").attr("id", `avatar-${person.id}`).append("circle").attr("r", 25).attr("cx", -nodeW/2 + 35).attr("cy", 0);
         card.append("image")
@@ -184,19 +195,20 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
 
   return (
     <div ref={wrapperRef} className="w-full h-full bg-slate-50 relative overflow-hidden">
-      <div className="absolute top-4 left-4 z-20 flex gap-2">
-        <div className="bg-white p-1 rounded-xl shadow-lg border flex">
+      <div className="absolute top-4 left-4 z-20 flex flex-col gap-2">
+        <div className="bg-white p-1 rounded-xl shadow-lg border flex overflow-hidden">
           {[
-            { id: 'branches', icon: GitBranch, label: 'Rami' },
-            { id: 'units', icon: Users, label: 'Nuclei' },
-            { id: 'generations', icon: Layers, label: 'Generazioni' }
+            { id: 'all', icon: Maximize, label: 'TUTTO' },
+            { id: 'branches', icon: GitBranch, label: 'RAMI' },
+            { id: 'units', icon: Users, label: 'NUCLEI' },
+            { id: 'generations', icon: Layers, label: 'GEN' }
           ].map(btn => (
             <button 
               key={btn.id}
               onClick={() => setViewMode(btn.id as ViewMode)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition ${viewMode === btn.id ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+              className={`flex items-center gap-2 px-3 py-2 text-[10px] font-bold transition ${viewMode === btn.id ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
             >
-              <btn.icon size={14} /> {btn.label}
+              <btn.icon size={12} /> {btn.label}
             </button>
           ))}
         </div>
@@ -204,13 +216,13 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
 
       <svg ref={svgRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
       
-      <div className="absolute bottom-4 right-4 flex flex-col items-end gap-1">
-          <div className="bg-white/80 backdrop-blur px-3 py-1 rounded-full border text-[10px] text-slate-500 font-bold uppercase tracking-widest">
-              Dati Locali: Browser
+      <div className="absolute bottom-4 right-4 flex flex-col items-end gap-1 pointer-events-none">
+          <div className="bg-white/90 backdrop-blur px-3 py-1 rounded-full border text-[10px] text-slate-500 font-bold uppercase tracking-widest">
+              Visualizzazione: {viewMode.toUpperCase()}
           </div>
-          {viewMode === 'generations' && (
-              <div className="bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100 text-[10px] text-emerald-700 font-medium">
-                  * Allineamento forzato G1-G{treeData ? d3.hierarchy(treeData).height + 1 : '?'}
+          {viewMode === 'all' && (
+              <div className="bg-blue-50 px-3 py-1 rounded-full border border-blue-100 text-[10px] text-blue-700">
+                  Panorama completo di tutti i capostipiti
               </div>
           )}
       </div>
