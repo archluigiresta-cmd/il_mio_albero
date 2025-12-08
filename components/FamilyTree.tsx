@@ -2,12 +2,12 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as d3 from 'd3';
 import { Person, Gender } from '../types';
 import { 
-  Search, 
-  Layers, 
-  Users, 
   GitBranch,
+  Users,
+  Layers,
   Maximize,
-  Edit2
+  Edit2,
+  Navigation
 } from 'lucide-react';
 import { PLACEHOLDER_IMAGE } from '../constants';
 
@@ -20,7 +20,7 @@ interface FamilyTreeProps {
 
 type ViewMode = 'all' | 'branches' | 'units' | 'generations';
 
-const VIRTUAL_ROOT_ID = 'VIRTUAL_ROOT';
+const VIRTUAL_ROOT_ID = 'SYSTEM_VIRTUAL_ROOT';
 
 export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, selectedPersonId, onOpenEditor }) => {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -42,17 +42,15 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const findRoot = (id: string): string => {
-    let current = data.find(p => p.id === id);
-    while (current && current.fatherId) {
-      const parent = data.find(p => p.id === current.fatherId);
-      if (parent) current = parent; else break;
-    }
-    return current?.id || id;
+  const findTrueRoots = (people: Person[]): string[] => {
+    // Una radice vera è chi non ha né padre né madre definiti nel database
+    return people
+      .filter(p => !p.fatherId && !p.motherId)
+      .map(p => p.id);
   };
 
   const treeData = useMemo(() => {
-    const build = (id: string, depth: number, visited = new Set()): any => {
+    const build = (id: string, depth: number, visited: Set<string>): any => {
       if (visited.has(id)) return null;
       visited.add(id);
 
@@ -60,32 +58,30 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       if (!p) return null;
       const spouse = data.find(s => p.spouseIds.includes(s.id));
       
-      let children = p.childrenIds;
+      let childrenIds = p.childrenIds;
       if (viewMode === 'units' && id !== selectedPersonId) {
-          children = [];
+          childrenIds = [];
       }
 
       return {
         id: p.id,
         person: p,
         spouse,
-        children: children.map(cid => build(cid, depth + 1, visited)).filter(Boolean)
+        children: childrenIds.map(cid => build(cid, depth + 1, visited)).filter(Boolean)
       };
     };
 
     if (viewMode === 'all') {
-        const roots = data.filter(p => !p.fatherId && !p.motherId);
-        const visitedGlobal = new Set();
+        const rootIds = findTrueRoots(data);
+        const visitedGlobal = new Set<string>();
         return {
             id: VIRTUAL_ROOT_ID,
-            person: { id: VIRTUAL_ROOT_ID, firstName: 'Root' } as Person,
-            children: roots.map(r => build(r.id, 0, visitedGlobal)).filter(Boolean)
+            children: rootIds.map(r => build(r, 0, visitedGlobal)).filter(Boolean)
         };
     }
 
-    const activeRootId = selectedPersonId ? findRoot(selectedPersonId) : data[0]?.id;
-    if (!activeRootId) return null;
-    return build(activeRootId, 0);
+    const activeRootId = selectedPersonId ? (data.find(p => p.id === selectedPersonId)?.id || data[0]?.id) : data[0]?.id;
+    return build(activeRootId, 0, new Set());
   }, [data, selectedPersonId, viewMode]);
 
   useEffect(() => {
@@ -97,31 +93,36 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
     const g = svg.append("g");
 
     const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.05, 2])
+      .scaleExtent([0.02, 3])
       .on("zoom", (e) => g.attr("transform", e.transform));
     
-    svg.call(zoom).call(zoom.transform, d3.zoomIdentity.translate(width/2, 50).scale(viewMode === 'all' ? 0.3 : 0.5));
+    svg.call(zoom);
+
+    // Initial Zoom Logic
+    const initialScale = viewMode === 'all' ? 0.2 : 0.6;
+    svg.call(zoom.transform, d3.zoomIdentity.translate(width/2, 100).scale(initialScale));
 
     const root = d3.hierarchy(treeData);
     const nodeW = 220;
     const nodeH = 100;
     
-    const treeLayout = d3.tree().nodeSize([nodeW + 120, nodeH + 160]);
+    // Spaziatura ortogonale professionale
+    const treeLayout = d3.tree().nodeSize([nodeW + 100, nodeH + 180]);
     treeLayout(root);
 
     if (viewMode === 'generations') {
-        root.each(d => { d.y = d.depth * 280; });
+        root.each(d => { d.y = d.depth * 300; });
     }
 
-    // Linee Ortogonali
+    // Linee di Connessione Ortogonali (Parent-Child)
     g.selectAll(".link")
       .data(root.links())
       .enter()
       .append("path")
       .attr("fill", "none")
-      .attr("stroke", "#cbd5e1")
+      .attr("stroke", "#94a3b8")
       .attr("stroke-width", 1.5)
-      .attr("opacity", d => d.source.data.id === VIRTUAL_ROOT_ID ? 0 : 1)
+      .attr("opacity", d => d.source.data.id === VIRTUAL_ROOT_ID ? 0 : 0.8)
       .attr("d", d => {
         const sx = d.source.x, sy = d.source.y;
         const tx = d.target.x, ty = d.target.y;
@@ -138,57 +139,57 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
     nodes.each(function(d: any) {
       if (d.data.id === VIRTUAL_ROOT_ID) return;
       const gNode = d3.select(this);
-      const p = d.data.person;
-      const s = d.data.spouse;
+      const person = d.data.person;
+      const spouse = d.data.spouse;
 
-      const drawCard = (person: Person, ox: number) => {
-        const isSelected = person.id === selectedPersonId;
-        const card = gNode.append("g").attr("transform", `translate(${ox},0)`);
-        
+      const drawPerson = (p: Person, offset: number) => {
+        const isSelected = p.id === selectedPersonId;
+        const card = gNode.append("g").attr("transform", `translate(${offset}, 0)`);
+
         card.append("rect")
           .attr("x", -nodeW/2)
           .attr("y", -nodeH/2)
           .attr("width", nodeW)
           .attr("height", nodeH)
-          .attr("rx", 12)
-          .attr("fill", isSelected ? "#f0fdf4" : "white")
-          .attr("stroke", isSelected ? "#059669" : (person.gender === 'M' ? "#3b82f6" : "#ec4899"))
+          .attr("rx", 10)
+          .attr("fill", isSelected ? "#f0f9ff" : "white")
+          .attr("stroke", isSelected ? "#0284c7" : (p.gender === 'M' ? "#bfdbfe" : "#fbcfe8"))
           .attr("stroke-width", isSelected ? 3 : 1.5)
           .style("cursor", "pointer")
-          .on("click", (e) => { e.stopPropagation(); onSelectPerson(person); });
+          .on("click", (e) => { e.stopPropagation(); onSelectPerson(p); });
 
-        // Badge Generazione
-        const badge = card.append("g").attr("transform", `translate(${-nodeW/2}, ${-nodeH/2})`);
-        badge.append("circle").attr("r", 12).attr("fill", "#64748b");
-        badge.append("text").attr("y", 4).attr("text-anchor", "middle").style("font-size", "9px").style("fill", "white").style("font-weight", "bold").text(`G${d.depth}`);
+        // Generation Badge
+        card.append("circle").attr("cx", -nodeW/2).attr("cy", -nodeH/2).attr("r", 10).attr("fill", "#64748b");
+        card.append("text").attr("x", -nodeW/2).attr("y", -nodeH/2 + 3).attr("text-anchor", "middle").style("font-size", "8px").style("fill", "white").text(d.depth);
 
-        card.append("clipPath").attr("id", `avatar-${person.id}`).append("circle").attr("r", 25).attr("cx", -nodeW/2 + 35).attr("cy", 0);
+        // Photo
+        card.append("clipPath").attr("id", `clip-${p.id}`).append("circle").attr("r", 20).attr("cx", -nodeW/2 + 25).attr("cy", 0);
         card.append("image")
-          .attr("xlink:href", person.photoUrl || PLACEHOLDER_IMAGE)
-          .attr("x", -nodeW/2 + 10).attr("y", -25)
-          .attr("width", 50).attr("height", 50)
-          .attr("clip-path", `url(#avatar-${person.id})`);
+          .attr("xlink:href", p.photoUrl || PLACEHOLDER_IMAGE)
+          .attr("x", -nodeW/2 + 5).attr("y", -20).attr("width", 40).attr("height", 40)
+          .attr("clip-path", `url(#clip-${p.id})`);
 
-        card.append("text").attr("x", -nodeW/2 + 70).attr("y", -10).style("font-size", "14px").style("font-weight", "bold").style("fill", "#0f172a").text(person.firstName);
-        card.append("text").attr("x", -nodeW/2 + 70).attr("y", 6).style("font-size", "12px").style("fill", "#64748b").text(person.lastName);
-        card.append("text").attr("x", -nodeW/2 + 70).attr("y", 22).style("font-size", "10px").style("fill", "#94a3b8").text(`${person.birthDate?.slice(-4) || '?'} - ${person.deathDate?.slice(-4) || (person.isLiving ? 'Viv' : '?')}`);
+        // Names
+        card.append("text").attr("x", -nodeW/2 + 55).attr("y", -5).style("font-size", "13px").style("font-weight", "700").text(p.firstName);
+        card.append("text").attr("x", -nodeW/2 + 55).attr("y", 12).style("font-size", "11px").style("fill", "#64748b").text(p.lastName);
+        card.append("text").attr("x", -nodeW/2 + 55).attr("y", 28).style("font-size", "9px").style("fill", "#94a3b8").text(`${p.birthDate?.slice(-4) || '?'} - ${p.isLiving ? 'Viv.' : (p.deathDate?.slice(-4) || '?')}`);
 
         if (isSelected) {
             const edit = card.append("g")
-              .attr("transform", `translate(${nodeW/2}, -${nodeH/2})`)
+              .attr("transform", `translate(${nodeW/2 - 15}, ${nodeH/2 - 15})`)
               .style("cursor", "pointer")
-              .on("click", (e) => { e.stopPropagation(); onOpenEditor(person); });
-            edit.append("circle").attr("r", 14).attr("fill", "#059669").attr("stroke", "white").attr("stroke-width", 2);
-            edit.append("text").attr("x", -4).attr("y", 4).style("fill", "white").style("font-size", "10px").text("✎");
+              .on("click", (e) => { e.stopPropagation(); onOpenEditor(p); });
+            edit.append("circle").attr("r", 12).attr("fill", "#0284c7");
+            edit.append("text").attr("x", -3).attr("y", 4).style("fill", "white").style("font-size", "9px").text("✎");
         }
       };
 
-      if (s) {
-        drawCard(p, -nodeW/2 - 5);
-        drawCard(s, nodeW/2 + 5);
-        gNode.append("line").attr("x1", -10).attr("x2", 10).attr("stroke", "#cbd5e1").attr("stroke-dasharray", "4");
+      if (spouse) {
+        drawPerson(person, -nodeW/2 - 5);
+        drawPerson(spouse, nodeW/2 + 5);
+        gNode.append("line").attr("x1", -10).attr("x2", 10).attr("stroke", "#94a3b8").attr("stroke-dasharray", "3,3");
       } else {
-        drawCard(p, 0);
+        drawPerson(person, 0);
       }
     });
   }, [treeData, dimensions, viewMode, selectedPersonId]);
@@ -196,17 +197,17 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
   return (
     <div ref={wrapperRef} className="w-full h-full bg-slate-50 relative overflow-hidden">
       <div className="absolute top-4 left-4 z-20 flex flex-col gap-2">
-        <div className="bg-white p-1 rounded-xl shadow-lg border flex overflow-hidden">
+        <div className="bg-white/90 backdrop-blur p-1 rounded-xl shadow-xl border flex">
           {[
             { id: 'all', icon: Maximize, label: 'TUTTO' },
             { id: 'branches', icon: GitBranch, label: 'RAMI' },
             { id: 'units', icon: Users, label: 'NUCLEI' },
-            { id: 'generations', icon: Layers, label: 'GEN' }
+            { id: 'generations', icon: Layers, label: 'CRONOLOGICO' }
           ].map(btn => (
             <button 
               key={btn.id}
               onClick={() => setViewMode(btn.id as ViewMode)}
-              className={`flex items-center gap-2 px-3 py-2 text-[10px] font-bold transition ${viewMode === btn.id ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+              className={`flex items-center gap-2 px-4 py-2 text-[10px] font-bold tracking-tight transition rounded-lg ${viewMode === btn.id ? 'bg-slate-900 text-white shadow-inner' : 'text-slate-500 hover:bg-slate-100'}`}
             >
               <btn.icon size={12} /> {btn.label}
             </button>
@@ -216,15 +217,25 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
 
       <svg ref={svgRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
       
-      <div className="absolute bottom-4 right-4 flex flex-col items-end gap-1 pointer-events-none">
-          <div className="bg-white/90 backdrop-blur px-3 py-1 rounded-full border text-[10px] text-slate-500 font-bold uppercase tracking-widest">
-              Visualizzazione: {viewMode.toUpperCase()}
-          </div>
-          {viewMode === 'all' && (
-              <div className="bg-blue-50 px-3 py-1 rounded-full border border-blue-100 text-[10px] text-blue-700">
-                  Panorama completo di tutti i capostipiti
-              </div>
-          )}
+      <div className="absolute bottom-4 left-4 bg-white/80 p-2 rounded border text-[9px] text-slate-400 font-mono">
+          Totale Membri: {data.length} | Modalità: {viewMode.toUpperCase()}
+      </div>
+
+      <div className="absolute bottom-4 right-4 flex gap-2">
+         <button 
+           onClick={() => {
+              if (svgRef.current && wrapperRef.current) {
+                d3.select(svgRef.current).transition().duration(750).call(
+                    d3.zoom().transform as any, 
+                    d3.zoomIdentity.translate(dimensions.width/2, 100).scale(0.3)
+                );
+              }
+           }}
+           className="bg-white p-2 rounded-full border shadow hover:bg-slate-50 transition"
+           title="Centra Visuale"
+         >
+           <Navigation size={16} className="text-slate-600" />
+         </button>
       </div>
     </div>
   );
