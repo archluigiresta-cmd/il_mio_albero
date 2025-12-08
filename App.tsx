@@ -176,11 +176,6 @@ const AppContent: React.FC = () => {
           <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-slate-800 to-slate-900 p-4 font-sans text-slate-100">
               <div className="bg-white text-slate-800 p-8 rounded-xl shadow-2xl w-full max-w-sm border border-slate-700 relative overflow-hidden">
                   
-                  {/* Badge Versione */}
-                  <div className="absolute top-2 right-2 text-[10px] text-slate-400 font-mono">
-                      v{APP_VERSION}
-                  </div>
-
                   <div className="flex justify-center mb-6">
                       <div className="p-4 bg-emerald-600 rounded-xl shadow-lg transform -translate-y-12">
                         <TreeDeciduous size={48} className="text-white" />
