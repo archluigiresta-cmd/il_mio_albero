@@ -35,7 +35,7 @@ const CLAN_COLORS = [
   "#4b5563"  // Slate
 ];
 
-// Focus iniziale su Simone Carmelo Murri come richiesto
+// Focus iniziale su Simone Carmelo Murri
 const FOCUS_USER_ID = "@I500001@"; 
 
 export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, selectedPersonId, onOpenEditor }) => {
@@ -81,7 +81,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
     });
   };
 
-  // Funzione per trovare tutti gli ID nel ramo diretto (ascendenti e discendenti)
   const getBranchIds = (startId: string): Set<string> => {
       const ids = new Set<string>();
       const visited = new Set<string>();
@@ -104,7 +103,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
           const p = data.find(x => x.id === currId);
           if (p) {
               p.childrenIds.forEach(cid => traverseDown(cid));
-              p.spouseIds.forEach(sid => ids.add(sid)); // Includi coniugi per contesto
+              p.spouseIds.forEach(sid => ids.add(sid)); 
           }
       };
 
@@ -114,7 +113,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
   };
 
   const clans = useMemo(() => {
-    // Se siamo in modalità "Rami" e c'è una selezione, filtriamo gli ID validi
     let branchIds: Set<string> | null = null;
     if (viewMode === 'branches' && selectedPersonId) {
         branchIds = getBranchIds(selectedPersonId);
@@ -122,8 +120,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
 
     const build = (id: string, depth: number, visited = new Set<string>()): any => {
       if (visited.has(id)) return null;
-      
-      // Filtro Rami
       if (branchIds && !branchIds.has(id)) return null;
 
       visited.add(id);
@@ -133,9 +129,8 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
 
       const spouse = data.find(s => p.spouseIds.includes(s.id));
       
-      // Costruisci figli ricorsivamente
       const children = p.childrenIds
-        .map(cid => build(cid, depth + 1, new Set(visited))) // Passiamo una copia di visited per permettere rami paralleli
+        .map(cid => build(cid, depth + 1, new Set(visited))) 
         .filter(Boolean);
       
       return {
@@ -146,26 +141,16 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       };
     };
 
-    // Troviamo i capostipiti (Roots)
-    // Logica: Chi non ha genitori registrati nel file
     const roots = data.filter(p => !p.fatherId && !p.motherId);
-    
     const validClans: any[] = [];
     
-    // Per gestire i clan sovrapposti come richiesto, NON usiamo un globalVisited.
-    // Ogni root genera il suo albero completo.
-    
     roots.forEach((root) => {
-        // Filtro Rami: se la root non è nel ramo selezionato, salta (se siamo in viewMode branches)
         if (branchIds && !branchIds.has(root.id)) {
-             // Eccezione: se un discendente è nel branchIds, dobbiamo processare questo root?
-             // Per semplicità, in modalità branch processiamo solo se la root è coinvolta o se scendiamo nel dettaglio.
-             // Miglioramento: build ritornerà null se nessun figlio matcha.
+             // Skip logic for branches mode
         }
 
         const tree = build(root.id, 0, new Set());
         
-        // Verifica se l'albero ha contenuto (utile per filtri)
         if (tree) {
             const countDescendants = (node: any): number => {
                 if(!node) return 0;
@@ -173,21 +158,18 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
             };
             
             const count = countDescendants(tree);
-            // Mostriamo solo clan con almeno una connessione o se stessi
             if (count > 0) {
                  validClans.push({
                     rootId: root.id,
                     name: `${root.lastName} ${root.firstName}`,
                     tree,
                     memberCount: count,
-                    // Hack per assegnare colore verde Murri se il nome contiene Murri, altrimenti rotazione
                     forceColor: root.lastName.toLowerCase().includes('murri') ? CLAN_COLORS[0] : undefined
                 });
             }
         }
     });
 
-    // Ordinamento: Murri prima di tutti (per richiesta utente), poi per grandezza
     return validClans
         .sort((a, b) => {
             if (a.rootId === FOCUS_USER_ID) return -1;
@@ -198,7 +180,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
         })
         .map((c, i) => ({ 
             ...c, 
-            color: c.forceColor || CLAN_COLORS[(i + 1) % CLAN_COLORS.length] // +1 per saltare il verde se non è Murri
+            color: c.forceColor || CLAN_COLORS[(i + 1) % CLAN_COLORS.length] 
         }));
 
   }, [data, viewMode, selectedPersonId]);
@@ -226,12 +208,12 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
         svg.call(zoom.transform, lastTransformRef.current);
     }
 
-    // --- PARAMETRI GRAFICI COMPATTI ---
-    const cardWidth = 220; // Ridotto da 260
-    const cardHeight = 80; // Ridotto da 90
-    const hGap = 20; // Ridotto drasticamente da 60 a 20 per avvicinare i cugini
-    const vGap = 150; // Ridotto verticale
-    const avatarSize = 50;
+    // --- PARAMETRI GRAFICI DINAMICI ---
+    const cardWidth = 200; 
+    const cardHeight = 70; 
+    const vGap = 130; 
+    const spouseGap = 20; // Spazio tra marito e moglie
+    const avatarSize = 48;
 
     let currentXOffset = 0;
     const activeClans = clans.filter(c => !hiddenClans.has(c.rootId));
@@ -246,15 +228,36 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
     activeClans.forEach((clan) => {
       const root = d3.hierarchy(clan.tree);
       
-      // NodeSize: definisce lo spazio MINIMO occupato da un nodo.
-      // Impostandolo più stretto, D3 avvicinerà i rami.
-      // [Larghezza, Altezza]
-      const treeLayout = d3.tree().nodeSize([cardWidth + 40, vGap]); 
+      // --- LAYOUT DINAMICO ANTICOLLISIONE ---
+      // Impostiamo una nodeSize base. 
+      // La vera magia avviene in .separation() dove calcoliamo se i nodi sono doppi (coppie) o singoli.
+      const treeLayout = d3.tree()
+        .nodeSize([cardWidth, vGap]) 
+        .separation((a: any, b: any) => {
+            const aIsCouple = !!a.data.spouse;
+            const bIsCouple = !!b.data.spouse;
+            
+            // Unità base = 1 cardWidth
+            // Se entrambi sono single vicini: 1.15 (piccolo margine)
+            // Se uno è coppia: serve spazio extra (metà larghezza extra card + margine)
+            // Se entrambi coppie: serve ancora più spazio
+            
+            let sep = 1.15;
+            if (aIsCouple) sep += 0.55; 
+            if (bIsCouple) sep += 0.55;
+            
+            // Se sono cugini (genitori diversi), aggiungi ulteriore aria
+            if (a.parent !== b.parent) sep += 0.3;
+            
+            return sep;
+        });
+
       treeLayout(root);
 
       const descendants = root.descendants();
       const links = root.links();
 
+      // Calcola larghezza reale del clan per l'offset orizzontale
       let minX = Infinity;
       let maxX = -Infinity;
       descendants.forEach(d => {
@@ -308,7 +311,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
         const drawCard = (person: Person, offsetX: number) => {
           const isSel = person.id === selectedPersonId;
           const isFemale = person.gender === 'F';
-          // Colore bordo basato sul sesso o selezione
           const borderColor = isSel ? "#10b981" : (isFemale ? "#fbcfe8" : "#bfdbfe"); 
           const strokeColor = isSel ? "#059669" : (isFemale ? "#db2777" : "#2563eb");
           
@@ -322,17 +324,17 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
             .attr("fill", "white")
             .attr("stroke", strokeColor)
             .attr("stroke-width", isSel ? 3 : 1)
-            .style("filter", "drop-shadow(0px 2px 3px rgba(0,0,0,0.1))")
+            .style("filter", "drop-shadow(0px 2px 3px rgba(0,0,0,0.08))")
             .style("cursor", "pointer")
             .on("click", (e) => { e.stopPropagation(); onSelectPerson(person); });
 
           // Foto Avatar
-          const avX = -cardWidth/2 + 35;
+          const avX = -cardWidth/2 + 32;
           card.append("circle")
              .attr("cx", avX).attr("cy", 0).attr("r", avatarSize/2)
              .attr("fill", "#f1f5f9").attr("stroke", strokeColor).attr("stroke-width", 1);
           
-          card.append("clipPath").attr("id", `cp-${person.id}-${i}-${clan.rootId}`) // ID univoco per clan sovrapposti
+          card.append("clipPath").attr("id", `cp-${person.id}-${i}-${clan.rootId}`)
              .append("circle").attr("cx", avX).attr("cy", 0).attr("r", avatarSize/2);
 
           card.append("image")
@@ -343,15 +345,15 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
              .attr("clip-path", `url(#cp-${person.id}-${i}-${clan.rootId})`);
 
           // Testi
-          const textX = -cardWidth/2 + 70;
-          const nameY = -12;
+          const textX = -cardWidth/2 + 64;
+          const nameY = -8;
 
           const fullName = `${person.firstName} ${person.lastName}`;
           const displayName = fullName.length > 22 ? fullName.substring(0, 20) + "..." : fullName;
           
           card.append("text")
              .attr("x", textX).attr("y", nameY)
-             .style("font-size", "13px").style("font-weight", "700").style("fill", "#334155").style("font-family", "sans-serif")
+             .style("font-size", "12px").style("font-weight", "700").style("fill", "#334155").style("font-family", "sans-serif")
              .text(displayName);
           
           const dateStr = person.birthDate 
@@ -359,38 +361,53 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
             : '...';
 
           card.append("text")
-             .attr("x", textX).attr("y", nameY + 18)
-             .style("font-size", "11px").style("fill", "#64748b")
+             .attr("x", textX).attr("y", nameY + 16)
+             .style("font-size", "10px").style("fill", "#64748b")
              .text(dateStr);
 
           if (!person.isLiving) {
-              card.append("text").attr("x", cardWidth/2 - 15).attr("y", cardHeight/2 - 10).text("†").style("font-size", "14px").style("fill", "#94a3b8");
+              card.append("text").attr("x", cardWidth/2 - 12).attr("y", cardHeight/2 - 8).text("†").style("font-size", "12px").style("fill", "#94a3b8");
           }
         };
 
         if (spouse) {
-          const gap = 10; // Gap tra coniugi molto stretto
+          // Disegno coppia:
+          // Il centro del nodo (0,0) cade esattamente nel mezzo della coppia.
+          // Marito a sinistra, Moglie a destra (o viceversa, qui usiamo l'ordine dati)
+          // Offset sinistro: -metà larghezza card - metà gap
+          // Offset destro: +metà larghezza card + metà gap
+          // Questo lascia il centro (0,0) libero per la linea che scende ai figli.
+          
+          const leftOffset = -cardWidth/2 - spouseGap/2;
+          const rightOffset = cardWidth/2 + spouseGap/2; // Attenzione: drawCard centra la card sul punto dato. 
+          // Quindi drawCard(p, -cardWidth/2 - gap/2) mette il CENTRO della card a quella coordinata.
+          // La larghezza totale occupata sarà da (-cardWidth - gap/2) a (+cardWidth + gap/2).
+          // D3 tree separation è stata configurata sopra per rispettare questo ingombro doppio.
+
           // Staffa Coniugale
           group.append("path")
-            .attr("d", `M${-gap},0 H${gap}`)
+            .attr("d", `M${-spouseGap/2 - 5},0 H${spouseGap/2 + 5}`) // Linea di unione leggermente più larga del gap
             .attr("stroke", "#475569")
             .attr("stroke-width", 2);
             
-          drawCard(p, -cardWidth/2 - gap);
-          drawCard(spouse, cardWidth/2 + gap);
+          // Card Sinistra (Capofamiglia del nodo)
+          drawCard(p, -cardWidth/2 - spouseGap/2);
+          // Card Destra (Coniuge)
+          drawCard(spouse, cardWidth/2 + spouseGap/2);
+          
         } else {
+          // Single: Centrato su 0,0
           drawCard(p, 0);
         }
       });
 
-      // Spazio tra clan
-      currentXOffset += maxX - minX + cardWidth + 200;
+      // Spazio tra clan successivi (basato sulla larghezza effettiva calcolata)
+      currentXOffset += maxX - minX + cardWidth + 300;
     });
 
     // --- AUTO FIT ---
     if (!hasInteractedRef.current && dimensions.width > 0) {
         try {
-            // Cerca Simone Murri o Focus User
             let focusNodeX = 0;
             let focusNodeY = 0;
             let foundFocus = false;
@@ -405,15 +422,13 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
             }
 
             if (foundFocus) {
-                // Centra sul capostipite Murri in alto
                 const scale = 0.85; 
                 const tx = dimensions.width / 2 - focusNodeX * scale;
-                const ty = 100; // Margine fisso dall'alto invece di centrare verticalmente, così si vede la cascata
+                const ty = 100; 
 
                 svg.transition().duration(1000)
                    .call(zoom.transform as any, d3.zoomIdentity.translate(tx, ty).scale(scale));
             } else {
-                // Fallback
                 const bounds = (g.node() as SVGGraphicsElement).getBBox();
                 if (bounds.width > 0) {
                      const scale = 0.85 / Math.max(bounds.width / dimensions.width, bounds.height / dimensions.height);
