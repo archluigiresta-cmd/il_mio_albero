@@ -44,7 +44,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   
-  // React 18 Transition per risolvere INP issue (lag al click)
+  // React 18 Transition per risolvere INP issue
   const [isPending, startTransition] = useTransition();
   const [viewMode, setViewMode] = useState<ViewMode>('all');
   
@@ -61,7 +61,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
         });
       }
     };
-    // Ritardo iniziale per garantire che il DOM sia pronto
     setTimeout(handleResize, 100);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
@@ -86,16 +85,25 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
 
   // Calcolo struttura dati (Pesante)
   const clans = useMemo(() => {
+    const globalVisited = new Set<string>();
+
     const build = (id: string, depth: number, visited = new Set<string>()): any => {
       if (visited.has(id)) return null;
       visited.add(id);
+      
       const p = data.find(x => x.id === id);
       if (!p) return null;
+
+      // Marcatura globale per evitare che questa persona o i suoi coniugi
+      // vengano processati come "nuovi clan" successivamente.
+      globalVisited.add(p.id);
+      p.spouseIds.forEach(sid => globalVisited.add(sid));
+
       const spouse = data.find(s => p.spouseIds.includes(s.id));
       let childrenIds = p.childrenIds;
+      
       // Filtro visualizzazione nuclei
       if (viewMode === 'units' && id !== selectedPersonId && !p.spouseIds.includes(selectedPersonId || '')) {
-         // Mostra figli solo se è il nucleo selezionato
          if(childrenIds.length > 0 && id !== selectedPersonId) childrenIds = [];
       }
       
@@ -107,22 +115,42 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       };
     };
 
+    // Ordina i potenziali capostipiti per numero di discendenti (stima grezza o logica business)
+    // In questo modo processiamo prima i rami grossi.
     const roots = data.filter(p => !p.fatherId && !p.motherId);
     
-    return roots.map((root, i) => {
-      const tree = build(root.id, 0, new Set());
-      const countDescendants = (node: any): number => {
-          if(!node) return 0;
-          return 1 + (node.children || []).reduce((acc: number, child: any) => acc + countDescendants(child), 0);
-      };
-      return {
-        rootId: root.id,
-        name: `${root.lastName} ${root.firstName}`,
-        color: CLAN_COLORS[i % CLAN_COLORS.length],
-        tree,
-        memberCount: countDescendants(tree)
-      };
-    }).sort((a, b) => b.memberCount - a.memberCount);
+    // Per un sort migliore, calcoliamo i discendenti prima o ci basiamo sull'ordine naturale.
+    // Qui usiamo un approccio greedy: processiamo e marchiamo.
+    
+    const validClans: any[] = [];
+
+    // Priorità: Murri e Resta (Hardcoded check per portarli in cima se necessario, 
+    // ma l'algoritmo di sort finale gestisce la visualizzazione)
+    
+    roots.forEach((root) => {
+        // Se la persona è già stata inclusa in un altro albero (es. come coniuge), saltiamola.
+        if (globalVisited.has(root.id)) return;
+
+        const tree = build(root.id, 0, new Set());
+        if (tree) {
+            const countDescendants = (node: any): number => {
+                if(!node) return 0;
+                return 1 + (node.children || []).reduce((acc: number, child: any) => acc + countDescendants(child), 0);
+            };
+            validClans.push({
+                rootId: root.id,
+                name: `${root.lastName} ${root.firstName}`,
+                tree,
+                memberCount: countDescendants(tree)
+            });
+        }
+    });
+
+    // Assegna colori e ordina per grandezza
+    return validClans
+        .sort((a, b) => b.memberCount - a.memberCount)
+        .map((c, i) => ({ ...c, color: CLAN_COLORS[i % CLAN_COLORS.length] }));
+
   }, [data, viewMode, selectedPersonId]);
 
   // Render D3 (Pesante)
@@ -157,8 +185,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
     // --- DISEGNO DEI CLAN ---
     activeClans.forEach((clan) => {
       const root = d3.hierarchy(clan.tree);
-      // Tree Layout: nodeSize definisce lo spazio che ogni nodo occupa [height, width] per orientamento orizzontale
-      // Ma noi vogliamo orientamento verticale standard, poi trasliamo.
       const treeLayout = d3.tree().nodeSize([nodeW + 40, vGap]); 
       treeLayout(root);
 
@@ -175,25 +201,27 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       const clanWidth = maxX - minX + nodeW;
 
       // Gruppo per il singolo clan
-      // Posizioniamo il clan: currentXOffset + sposto tutto a destra per non andare in negativo rispetto al minX locale
       const clanGroup = g.append("g")
         .attr("transform", `translate(${currentXOffset - minX}, 0)`);
 
-      // 1. Linee di connessione (Links)
+      // 1. Linee di connessione (Links) - SQUADRATE / ORTOGONALI
       clanGroup.selectAll(".link")
         .data(links)
         .enter()
         .append("path")
         .attr("fill", "none")
-        .attr("stroke", clan.color)
+        .attr("stroke", "#64748b") // Colore grigio neutro per le linee, meno intrusivo del colore clan
         .attr("stroke-width", 2)
-        .attr("opacity", 0.3)
         .attr("d", (d: any) => {
-            // Curva di Bezier cubica verticale
-            return `M${d.source.x},${d.source.y + nodeH/2} 
-                    C${d.source.x},${(d.source.y + d.target.y)/2} 
-                     ${d.target.x},${(d.source.y + d.target.y)/2} 
-                     ${d.target.x},${d.target.y - nodeH/2}`;
+            const sy = d.source.y + nodeH/2;
+            const ty = d.target.y - nodeH/2;
+            const midY = (sy + ty) / 2;
+            
+            // Logica Ortogonale: M -> V -> H -> V
+            return `M ${d.source.x} ${sy} 
+                    V ${midY} 
+                    H ${d.target.x} 
+                    V ${ty}`;
         });
 
       // 2. Nodi (Persone)
@@ -224,10 +252,10 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
             .style("cursor", "pointer")
             .on("click", (e) => { e.stopPropagation(); onSelectPerson(person); });
 
-          // Header colorato (piccola striscia in alto)
+          // Header colorato
           card.append("path")
              .attr("d", `M${-nodeW/2},-nodeH/2 a12,12 0 0 1 12,-12 h${nodeW-24} a12,12 0 0 1 12,12 v6 h-${nodeW} z`)
-             .attr("transform", `translate(0, ${-nodeH/2 + 6})`) // Fix path pos
+             .attr("transform", `translate(0, ${-nodeH/2 + 6})`) 
              .attr("fill", isSel ? "#1e293b" : (person.gender === 'M' ? "#f1f5f9" : "#fdf2f8"));
 
           // Foto / Avatar
@@ -238,7 +266,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
              .attr("cx", avX).attr("cy", 0).attr("r", avSize/2 + 2)
              .attr("fill", "white").attr("stroke", clan.color).attr("stroke-width", 2);
           
-          card.append("clipPath").attr("id", `cp-${person.id}-${i}`) // ID univoco
+          card.append("clipPath").attr("id", `cp-${person.id}-${i}`) 
              .append("circle").attr("cx", avX).attr("cy", 0).attr("r", avSize/2);
 
           card.append("image")
@@ -285,52 +313,45 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
           group.append("line")
             .attr("x1", -20).attr("x2", 20).attr("y1", 0).attr("y2", 0)
             .attr("stroke", "#94a3b8").attr("stroke-width", 2);
-            
-          // Linea discendenza parte dal centro della coppia
-          // (D3 tree assume x,y del nodo padre, che qui è 0,0 relativo al gruppo. Perfetto.)
         } else {
           // Singolo
           drawCard(p, 0);
         }
       });
 
-      // Aggiorna offset per il prossimo clan, aggiungendo un gap
       currentXOffset += clanWidth + hGap;
     });
 
     // --- AUTO FIT (ZOOM TO FIT) ---
-    // Questa è la parte critica per risolvere "non vedo nulla"
     try {
         const bounds = (g.node() as SVGGraphicsElement).getBBox();
         const fullWidth = dimensions.width;
         const fullHeight = dimensions.height;
         
         if (bounds.width > 0 && bounds.height > 0 && fullWidth > 0) {
-            const padding = 60;
             const scale = 0.9 / Math.max(
                 bounds.width / fullWidth, 
                 bounds.height / fullHeight
             );
             
-            // Limitiamo lo scale max per non avere nodi giganti se ce ne sono pochi
             const finalScale = Math.min(scale, 1); 
 
             const tx = (fullWidth - bounds.width * finalScale) / 2 - bounds.x * finalScale;
             const ty = (fullHeight - bounds.height * finalScale) / 2 - bounds.y * finalScale;
 
             svg.transition().duration(750)
-               .call(zoom.transform as any, d3.zoomIdentity.translate(tx, 50).scale(finalScale)); // 50px top margin fisso
+               .call(zoom.transform as any, d3.zoomIdentity.translate(tx, 50).scale(finalScale));
         }
     } catch (e) {
         console.error("Auto-fit error", e);
     }
 
-  }, [clans, hiddenClans, dimensions, selectedPersonId]); // Rimosso viewMode dalle dipendenze dirette per evitare doppio render, clans cambia con viewMode
+  }, [clans, hiddenClans, dimensions, selectedPersonId]); 
 
   return (
     <div ref={wrapperRef} className="w-full h-full bg-[#f8fafc] relative overflow-hidden">
       
-      {/* Loading Overlay (per INP feedback) */}
+      {/* Loading Overlay */}
       {isPending && (
           <div className="absolute top-4 right-20 z-50 bg-white/80 px-3 py-1 rounded-full text-xs font-bold text-emerald-600 flex items-center gap-2 shadow-sm border animate-pulse">
               <Loader2 size={12} className="animate-spin" /> Elaborazione...
@@ -438,7 +459,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
          <button onClick={() => d3.select(svgRef.current).transition().call(d3.zoom().scaleBy as any, 0.7)} className="bg-white p-3 rounded-xl border shadow-lg hover:bg-slate-50 active:bg-slate-100 transition text-slate-600"><ZoomOut size={20} /></button>
          <button 
             onClick={() => {
-                // Manual re-trigger auto fit
                 const g = d3.select(svgRef.current).select("#main-group");
                 try {
                     const bounds = (g.node() as any).getBBox();
