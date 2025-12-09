@@ -11,7 +11,8 @@ import {
   Menu,
   X,
   Loader2,
-  Filter
+  Filter,
+  Network
 } from 'lucide-react';
 import { PLACEHOLDER_IMAGE } from '../constants';
 
@@ -35,7 +36,6 @@ const CLAN_COLORS = [
   "#4b5563"  // Slate
 ];
 
-// Focus iniziale su Simone Carmelo Murri
 const FOCUS_USER_ID = "@I500001@"; 
 
 export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, selectedPersonId, onOpenEditor }) => {
@@ -185,14 +185,14 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
 
   }, [data, viewMode, selectedPersonId]);
 
-  // --- RENDERING D3 ---
+  // --- RENDERING D3 "MAGNETIC MERGE" CON FILTRO DUPLICATI ---
   useEffect(() => {
     if (!clans.length || !svgRef.current || !dimensions.width) return;
 
     const svg = d3.select(svgRef.current);
     
     const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.1, 2.5])
+      .scaleExtent([0.05, 2.5])
       .on("zoom", (e) => {
           g.attr("transform", e.transform);
           lastTransformRef.current = e.transform;
@@ -208,14 +208,12 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
         svg.call(zoom.transform, lastTransformRef.current);
     }
 
-    // --- PARAMETRI GRAFICI DINAMICI ---
     const cardWidth = 200; 
     const cardHeight = 70; 
     const vGap = 130; 
-    const spouseGap = 20; // Spazio tra marito e moglie
+    const spouseGap = 20;
     const avatarSize = 48;
 
-    let currentXOffset = 0;
     const activeClans = clans.filter(c => !hiddenClans.has(c.rootId));
 
     if (activeClans.length === 0) {
@@ -223,187 +221,261 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
         return;
     }
 
-    const nodePositions = new Map<string, {x: number, y: number}>();
+    // --- ALGORITMO DI DISEGNO MAGNETICO ---
+    
+    // Mappa globale delle posizioni per allineamento
+    const globalPositions = new Map<string, {x: number, y: number, clanId: string}>();
+    // Set per tracciare chi è GIÀ stato renderizzato nel DOM (per evitare doppi nodi visuali)
+    const renderedNodes = new Set<string>(); 
 
-    activeClans.forEach((clan) => {
-      const root = d3.hierarchy(clan.tree);
-      
-      // --- LAYOUT DINAMICO ANTICOLLISIONE ---
-      // Impostiamo una nodeSize base. 
-      // La vera magia avviene in .separation() dove calcoliamo se i nodi sono doppi (coppie) o singoli.
-      const treeLayout = d3.tree()
-        .nodeSize([cardWidth, vGap]) 
-        .separation((a: any, b: any) => {
-            const aIsCouple = !!a.data.spouse;
-            const bIsCouple = !!b.data.spouse;
+    let maxXSoFar = 0;
+
+    let remainingClans = [...activeClans];
+    const processedClanIds = new Set<string>();
+
+    const findPivot = (clanTree: any): { offsetX: number, offsetY: number, found: boolean } => {
+        const root = d3.hierarchy(clanTree);
+        const descendants = root.descendants();
+        // Layout temporaneo per calcolare le coordinate relative interne
+        const tempLayout = d3.tree().nodeSize([cardWidth, vGap]).separation(() => 1);
+        tempLayout(root);
+
+        for (const d of descendants) {
+            const pId = d.data.id;
+            const spouseId = d.data.spouse?.id;
+
+            if (globalPositions.has(pId)) {
+                const existing = globalPositions.get(pId)!;
+                return { offsetX: existing.x - d.x, offsetY: existing.y - d.y, found: true };
+            }
+            if (spouseId && globalPositions.has(spouseId)) {
+                const existing = globalPositions.get(spouseId)!;
+                return { offsetX: existing.x - d.x, offsetY: existing.y - d.y, found: true };
+            }
+        }
+        return { offsetX: 0, offsetY: 0, found: false };
+    };
+
+    while (remainingClans.length > 0) {
+        let clanIndexToProcess = -1;
+        let bestOffset = { x: 0, y: 0 };
+        let isIsland = true;
+
+        if (processedClanIds.size === 0) {
+            clanIndexToProcess = 0;
+            isIsland = true;
+        } else {
+            // Cerchiamo un clan che si aggancia a quelli già disegnati
+            for (let i = 0; i < remainingClans.length; i++) {
+                const pivot = findPivot(remainingClans[i].tree);
+                if (pivot.found) {
+                    clanIndexToProcess = i;
+                    bestOffset = { x: pivot.offsetX, y: pivot.offsetY };
+                    isIsland = false;
+                    break;
+                }
+            }
+            if (clanIndexToProcess === -1) {
+                clanIndexToProcess = 0;
+                isIsland = true;
+            }
+        }
+
+        const clan = remainingClans[clanIndexToProcess];
+        remainingClans.splice(clanIndexToProcess, 1);
+        processedClanIds.add(clan.rootId);
+
+        // Calcolo Layout
+        const root = d3.hierarchy(clan.tree);
+        const treeLayout = d3.tree()
+            .nodeSize([cardWidth, vGap]) 
+            .separation((a: any, b: any) => {
+                const aIsCouple = !!a.data.spouse;
+                const bIsCouple = !!b.data.spouse;
+                let sep = 1.15;
+                if (aIsCouple) sep += 0.55; 
+                if (bIsCouple) sep += 0.55;
+                if (a.parent !== b.parent) sep += 0.3;
+                return sep;
+            });
+        treeLayout(root);
+
+        let finalOffsetX = 0;
+        let finalOffsetY = 0;
+
+        if (isIsland) {
+            let localMinX = Infinity;
+            root.descendants().forEach(d => { if(d.x < localMinX) localMinX = d.x; });
             
-            // Unità base = 1 cardWidth
-            // Se entrambi sono single vicini: 1.15 (piccolo margine)
-            // Se uno è coppia: serve spazio extra (metà larghezza extra card + margine)
-            // Se entrambi coppie: serve ancora più spazio
+            if (processedClanIds.size === 1) {
+                finalOffsetX = -localMinX;
+            } else {
+                finalOffsetX = maxXSoFar - localMinX + cardWidth + 250;
+            }
+        } else {
+            finalOffsetX = bestOffset.x;
+            finalOffsetY = bestOffset.y;
+        }
+
+        root.descendants().forEach(d => {
+            const absX = d.x + finalOffsetX;
+            if (absX > maxXSoFar) maxXSoFar = absX;
             
-            let sep = 1.15;
-            if (aIsCouple) sep += 0.55; 
-            if (bIsCouple) sep += 0.55;
+            // Aggiorniamo la mappa globale delle posizioni
+            // Questo è fondamentale: anche se non disegneremo il nodo (perché duplicato),
+            // dobbiamo sapere dove "avrebbe" dovuto essere per calcolare i pivot futuri
+            // e per le linee di connessione.
+            const pId = d.data.person.id;
+            const sId = d.data.spouse?.id;
             
-            // Se sono cugini (genitori diversi), aggiungi ulteriore aria
-            if (a.parent !== b.parent) sep += 0.3;
-            
-            return sep;
+            if (!globalPositions.has(pId)) globalPositions.set(pId, {x: absX, y: d.y + finalOffsetY, clanId: clan.rootId});
+            if (sId && !globalPositions.has(sId)) globalPositions.set(sId, {x: absX, y: d.y + finalOffsetY, clanId: clan.rootId});
         });
 
-      treeLayout(root);
+        const clanGroup = g.append("g")
+            .attr("transform", `translate(${finalOffsetX}, ${finalOffsetY})`);
 
-      const descendants = root.descendants();
-      const links = root.links();
+        // --- FILTRAGGIO INTELLIGENTE DELLE LINEE (UNIQUE DESCENT) ---
+        // Disegniamo una linea SOLO SE il nodo target (figlio) non è stato ancora renderizzato da un altro clan.
+        // Se il figlio esiste già, significa che la sua discendenza è già stata tracciata dal clan precedente.
+        // Tuttavia, dobbiamo disegnare la linea che va dal "Nuovo Genitore" al "Vecchio Figlio" (punto di fusione).
+        // Il problema è quando ANCHE la sorgente (Genitore) è già renderizzata.
+        // Regola: Non disegnare il link se Source E Target sono entrambi già rendered.
+        
+        const linksToDraw = root.links().filter(link => {
+             const sourceId = link.source.data.id;
+             const targetId = link.target.data.id;
+             const sourceAlreadyRendered = renderedNodes.has(sourceId);
+             const targetAlreadyRendered = renderedNodes.has(targetId);
 
-      // Calcola larghezza reale del clan per l'offset orizzontale
-      let minX = Infinity;
-      let maxX = -Infinity;
-      descendants.forEach(d => {
-          if (d.x < minX) minX = d.x;
-          if (d.x > maxX) maxX = d.x;
-      });
+             // Se entrambi esistono già graficamente, la linea è un duplicato di un albero precedente -> SKIP
+             if (sourceAlreadyRendered && targetAlreadyRendered) return false;
 
-      const clanGroup = g.append("g")
-        .attr("transform", `translate(${currentXOffset - minX}, 0)`);
+             return true;
+        });
 
-      // LINKS
-      const linkPathGenerator = (d: any) => {
+        const linkPathGenerator = (d: any) => {
             const sourceX = d.source.x;
             const sourceY = d.source.y;
             const targetX = d.target.x;
             const targetY = d.target.y;
-
             const startY = sourceY + cardHeight / 2;
             const endY = targetY - cardHeight / 2;
             const midY = (startY + endY) / 2;
-
-            return `M ${sourceX} ${startY} 
-                    V ${midY} 
-                    H ${targetX} 
-                    V ${endY}`;
-      };
-
-      clanGroup.selectAll(".link")
-        .data(links)
-        .enter()
-        .append("path")
-        .attr("fill", "none")
-        .attr("stroke", "#94a3b8")
-        .attr("stroke-width", 2)
-        .attr("d", linkPathGenerator);
-
-      // NODI
-      const nodeGroups = clanGroup.selectAll(".node")
-        .data(descendants)
-        .enter()
-        .append("g")
-        .attr("transform", d => `translate(${d.x},${d.y})`);
-
-      nodeGroups.each(function(d: any, i: number) {
-        const group = d3.select(this);
-        const p = d.data.person;
-        const spouse = d.data.spouse;
-        
-        nodePositions.set(p.id, { x: d.x + currentXOffset - minX, y: d.y });
-
-        const drawCard = (person: Person, offsetX: number) => {
-          const isSel = person.id === selectedPersonId;
-          const isFemale = person.gender === 'F';
-          const borderColor = isSel ? "#10b981" : (isFemale ? "#fbcfe8" : "#bfdbfe"); 
-          const strokeColor = isSel ? "#059669" : (isFemale ? "#db2777" : "#2563eb");
-          
-          const card = group.append("g").attr("transform", `translate(${offsetX}, 0)`);
-
-          // Sfondo Card
-          card.append("rect")
-            .attr("x", -cardWidth/2).attr("y", -cardHeight/2)
-            .attr("width", cardWidth).attr("height", cardHeight)
-            .attr("rx", 6)
-            .attr("fill", "white")
-            .attr("stroke", strokeColor)
-            .attr("stroke-width", isSel ? 3 : 1)
-            .style("filter", "drop-shadow(0px 2px 3px rgba(0,0,0,0.08))")
-            .style("cursor", "pointer")
-            .on("click", (e) => { e.stopPropagation(); onSelectPerson(person); });
-
-          // Foto Avatar
-          const avX = -cardWidth/2 + 32;
-          card.append("circle")
-             .attr("cx", avX).attr("cy", 0).attr("r", avatarSize/2)
-             .attr("fill", "#f1f5f9").attr("stroke", strokeColor).attr("stroke-width", 1);
-          
-          card.append("clipPath").attr("id", `cp-${person.id}-${i}-${clan.rootId}`)
-             .append("circle").attr("cx", avX).attr("cy", 0).attr("r", avatarSize/2);
-
-          card.append("image")
-             .attr("xlink:href", person.photoUrl || PLACEHOLDER_IMAGE)
-             .attr("x", avX - avatarSize/2).attr("y", -avatarSize/2)
-             .attr("width", avatarSize).attr("height", avatarSize)
-             .attr("preserveAspectRatio", "xMidYMid slice")
-             .attr("clip-path", `url(#cp-${person.id}-${i}-${clan.rootId})`);
-
-          // Testi
-          const textX = -cardWidth/2 + 64;
-          const nameY = -8;
-
-          const fullName = `${person.firstName} ${person.lastName}`;
-          const displayName = fullName.length > 22 ? fullName.substring(0, 20) + "..." : fullName;
-          
-          card.append("text")
-             .attr("x", textX).attr("y", nameY)
-             .style("font-size", "12px").style("font-weight", "700").style("fill", "#334155").style("font-family", "sans-serif")
-             .text(displayName);
-          
-          const dateStr = person.birthDate 
-            ? `${person.birthDate.slice(-4)}${person.deathDate ? ' - ' + person.deathDate.slice(-4) : ''}`
-            : '...';
-
-          card.append("text")
-             .attr("x", textX).attr("y", nameY + 16)
-             .style("font-size", "10px").style("fill", "#64748b")
-             .text(dateStr);
-
-          if (!person.isLiving) {
-              card.append("text").attr("x", cardWidth/2 - 12).attr("y", cardHeight/2 - 8).text("†").style("font-size", "12px").style("fill", "#94a3b8");
-          }
+            return `M ${sourceX} ${startY} V ${midY} H ${targetX} V ${endY}`;
         };
+        
+        clanGroup.selectAll(".link")
+            .data(linksToDraw)
+            .enter()
+            .append("path")
+            .attr("fill", "none")
+            .attr("stroke", "#94a3b8")
+            .attr("stroke-width", 2)
+            .attr("d", linkPathGenerator);
 
-        if (spouse) {
-          // Disegno coppia:
-          // Il centro del nodo (0,0) cade esattamente nel mezzo della coppia.
-          // Marito a sinistra, Moglie a destra (o viceversa, qui usiamo l'ordine dati)
-          // Offset sinistro: -metà larghezza card - metà gap
-          // Offset destro: +metà larghezza card + metà gap
-          // Questo lascia il centro (0,0) libero per la linea che scende ai figli.
-          
-          const leftOffset = -cardWidth/2 - spouseGap/2;
-          const rightOffset = cardWidth/2 + spouseGap/2; // Attenzione: drawCard centra la card sul punto dato. 
-          // Quindi drawCard(p, -cardWidth/2 - gap/2) mette il CENTRO della card a quella coordinata.
-          // La larghezza totale occupata sarà da (-cardWidth - gap/2) a (+cardWidth + gap/2).
-          // D3 tree separation è stata configurata sopra per rispettare questo ingombro doppio.
+        // --- DISEGNO NODI CON SOPPRESSIONE DUPLICATI ---
+        const descendants = root.descendants();
+        const nodeGroups = clanGroup.selectAll(".node")
+            .data(descendants)
+            .enter()
+            .append("g")
+            .attr("transform", d => `translate(${d.x},${d.y})`);
 
-          // Staffa Coniugale
-          group.append("path")
-            .attr("d", `M${-spouseGap/2 - 5},0 H${spouseGap/2 + 5}`) // Linea di unione leggermente più larga del gap
-            .attr("stroke", "#475569")
-            .attr("stroke-width", 2);
+        nodeGroups.each(function(d: any, i: number) {
+            const p = d.data.person;
+            const spouse = d.data.spouse;
+            const group = d3.select(this);
+
+            // Controlla se sono già stati renderizzati visivamente
+            const pAlreadyRendered = renderedNodes.has(p.id);
+            const spouseAlreadyRendered = spouse ? renderedNodes.has(spouse.id) : false;
+
+            // Marchiamoli come renderizzati per i prossimi cicli/link
+            renderedNodes.add(p.id);
+            if(spouse) renderedNodes.add(spouse.id);
+
+            const drawCard = (person: Person, offsetX: number, skipRender: boolean) => {
+                // SE IL NODO ESISTE GIÀ GRAFICAMENTE (dal clan precedente), NON DISEGNARLO DI NUOVO.
+                // Questo evita l'effetto "grassetto" o sovrapposizioni imprecise.
+                // Il nodo esiste già nella posizione corretta grazie all'allineamento.
+                if (skipRender) return;
+
+                const isSel = person.id === selectedPersonId;
+                const isFemale = person.gender === 'F';
+                const strokeColor = isSel ? "#059669" : (isFemale ? "#db2777" : "#2563eb");
             
-          // Card Sinistra (Capofamiglia del nodo)
-          drawCard(p, -cardWidth/2 - spouseGap/2);
-          // Card Destra (Coniuge)
-          drawCard(spouse, cardWidth/2 + spouseGap/2);
-          
-        } else {
-          // Single: Centrato su 0,0
-          drawCard(p, 0);
-        }
-      });
+                const card = group.append("g").attr("transform", `translate(${offsetX}, 0)`);
 
-      // Spazio tra clan successivi (basato sulla larghezza effettiva calcolata)
-      currentXOffset += maxX - minX + cardWidth + 300;
-    });
+                card.append("rect")
+                    .attr("x", -cardWidth/2).attr("y", -cardHeight/2)
+                    .attr("width", cardWidth).attr("height", cardHeight)
+                    .attr("rx", 6)
+                    .attr("fill", "white")
+                    .attr("stroke", strokeColor)
+                    .attr("stroke-width", isSel ? 3 : 1)
+                    .style("cursor", "pointer")
+                    .on("click", (e) => { e.stopPropagation(); onSelectPerson(person); });
+
+                const avX = -cardWidth/2 + 32;
+                card.append("circle")
+                    .attr("cx", avX).attr("cy", 0).attr("r", avatarSize/2)
+                    .attr("fill", "#f1f5f9").attr("stroke", strokeColor).attr("stroke-width", 1);
+            
+                const uniqueClipId = `cp-${person.id}-${clan.rootId}-${i}`; 
+                card.append("clipPath").attr("id", uniqueClipId)
+                    .append("circle").attr("cx", avX).attr("cy", 0).attr("r", avatarSize/2);
+
+                card.append("image")
+                    .attr("xlink:href", person.photoUrl || PLACEHOLDER_IMAGE)
+                    .attr("x", avX - avatarSize/2).attr("y", -avatarSize/2)
+                    .attr("width", avatarSize).attr("height", avatarSize)
+                    .attr("preserveAspectRatio", "xMidYMid slice")
+                    .attr("clip-path", `url(#${uniqueClipId})`);
+
+                const textX = -cardWidth/2 + 64;
+                const nameY = -8;
+                const fullName = `${person.firstName} ${person.lastName}`;
+                const displayName = fullName.length > 22 ? fullName.substring(0, 20) + "..." : fullName;
+            
+                card.append("text")
+                    .attr("x", textX).attr("y", nameY)
+                    .style("font-size", "12px").style("font-weight", "700").style("fill", "#334155")
+                    .text(displayName);
+            
+                const dateStr = person.birthDate 
+                    ? `${person.birthDate.slice(-4)}${person.deathDate ? ' - ' + person.deathDate.slice(-4) : ''}`
+                    : '...';
+
+                card.append("text")
+                    .attr("x", textX).attr("y", nameY + 16)
+                    .style("font-size", "10px").style("fill", "#64748b")
+                    .text(dateStr);
+
+                if (!person.isLiving) {
+                    card.append("text").attr("x", cardWidth/2 - 12).attr("y", cardHeight/2 - 8).text("†").style("font-size", "12px").style("fill", "#94a3b8");
+                }
+            };
+
+            if (spouse) {
+                const leftOffset = -cardWidth/2 - spouseGap/2;
+                const rightOffset = cardWidth/2 + spouseGap/2; 
+
+                // Disegna la staffa solo se stiamo effettivamente disegnando almeno uno dei due nodi
+                if (!pAlreadyRendered || !spouseAlreadyRendered) {
+                    group.append("path")
+                        .attr("d", `M${-spouseGap/2 - 5},0 H${spouseGap/2 + 5}`)
+                        .attr("stroke", "#475569")
+                        .attr("stroke-width", 2);
+                }
+                
+                drawCard(p, leftOffset, pAlreadyRendered);
+                drawCard(spouse, rightOffset, spouseAlreadyRendered);
+            } else {
+                drawCard(p, 0, pAlreadyRendered);
+            }
+        });
+    }
 
     // --- AUTO FIT ---
     if (!hasInteractedRef.current && dimensions.width > 0) {
@@ -412,8 +484,8 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
             let focusNodeY = 0;
             let foundFocus = false;
 
-            if (nodePositions.has(FOCUS_USER_ID)) {
-                const pos = nodePositions.get(FOCUS_USER_ID);
+            if (globalPositions.has(FOCUS_USER_ID)) {
+                const pos = globalPositions.get(FOCUS_USER_ID);
                 if (pos) {
                     focusNodeX = pos.x;
                     focusNodeY = pos.y;
@@ -425,7 +497,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 const scale = 0.85; 
                 const tx = dimensions.width / 2 - focusNodeX * scale;
                 const ty = 100; 
-
                 svg.transition().duration(1000)
                    .call(zoom.transform as any, d3.zoomIdentity.translate(tx, ty).scale(scale));
             } else {
@@ -446,17 +517,19 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       
       {isPending && (
           <div className="absolute top-4 right-20 z-50 bg-white/90 px-4 py-2 rounded-full text-sm font-bold text-emerald-600 flex items-center gap-2 shadow-lg border border-emerald-100 animate-pulse">
-              <Loader2 size={16} className="animate-spin" /> Elaborazione...
+              <Loader2 size={16} className="animate-spin" /> Elaborazione Grafico...
           </div>
       )}
 
       {/* View Selectors */}
       <div className="absolute top-6 left-6 z-20 flex flex-col gap-4">
-        <h2 className="font-serif text-2xl font-bold text-slate-800 drop-shadow-sm">Albero Genealogico</h2>
+        <h2 className="font-serif text-2xl font-bold text-slate-800 drop-shadow-sm flex items-center gap-2">
+            <Network className="text-emerald-600"/> Albero Unificato
+        </h2>
         <div className="bg-white/95 backdrop-blur p-1 rounded-xl shadow-lg border border-slate-200 flex items-center w-fit">
           {[
-            { id: 'all', icon: Maximize, label: 'Panorama Completo' },
-            { id: 'branches', icon: GitBranch, label: 'Solo Ramo Diretto' },
+            { id: 'all', icon: Maximize, label: 'Panorama' },
+            { id: 'branches', icon: GitBranch, label: 'Ramo Diretto' },
           ].map(btn => (
             <button 
               key={btn.id}
@@ -472,11 +545,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
             </button>
           ))}
         </div>
-        {viewMode === 'branches' && !selectedPersonId && (
-            <div className="bg-amber-50 text-amber-700 px-3 py-2 rounded-lg text-xs border border-amber-200 max-w-xs flex items-center gap-2">
-                <Filter size={14} /> Seleziona una persona per isolare il suo ramo.
-            </div>
-        )}
       </div>
 
       {/* Sidebar Toggle */}
@@ -498,7 +566,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
           <div className="flex items-center justify-between border-b border-slate-200 pb-5 mb-5">
             <div>
                 <h3 className="text-lg font-serif font-bold text-slate-800">Clan Familiari</h3>
-                <p className="text-xs text-slate-500">Accendi/Spegni le famiglie.</p>
+                <p className="text-xs text-slate-500">I clan si uniranno automaticamente.</p>
             </div>
             <button onClick={() => setIsSidebarOpen(false)} className="text-slate-400 hover:text-slate-900 transition p-2 hover:bg-slate-200 rounded-full">
               <X size={20} />
@@ -534,7 +602,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
           </div>
           
           <div className="mt-4 pt-4 border-t text-[10px] text-slate-400 text-center leading-relaxed">
-             Nota: Attivando più clan collegati, i membri comuni verranno mostrati in entrambi i rami (sovrapposizione).
+             Sistema Smart Merge attivo: I rami con membri in comune verranno sovrapposti per creare un albero unificato.
           </div>
         </div>
       </div>

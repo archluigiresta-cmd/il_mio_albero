@@ -134,22 +134,29 @@ const generateUniqueId = (prefix: string = 'IMP') => {
 
 const normalizeString = (s?: string) => s ? s.trim().toLowerCase() : '';
 
+// Helper per decidere se sovrascrivere un valore
+const mergeField = (oldVal: any, newVal: any) => {
+    // Se il valore nuovo esiste ed è diverso, lo preferiamo, A MENO CHE non sia un "Unknown" o vuoto
+    if (!newVal) return oldVal;
+    if (newVal === 'Sconosciuto' || newVal === '') return oldVal;
+    return newVal;
+};
+
 export const mergePeople = (existing: Person[], incoming: Person[]): { merged: Person[], stats: { added: number, updated: number } } => {
     const mergedList = [...existing];
     let addedCount = 0;
     let updatedCount = 0;
 
     // Mappa ID originale import -> Nuovo ID univoco
-    // Questo serve perché due file GEDCOM diversi usano gli stessi ID (@I1@, @I2@...)
     const idMapping = new Map<string, string>();
 
-    // 1. Assegna nuovi ID a tutti gli incoming per evitare collisioni tecniche
+    // 1. Assegna nuovi ID a tutti gli incoming
     incoming.forEach(p => {
         const newId = generateUniqueId();
         idMapping.set(p.id, newId);
     });
 
-    // 2. Crea le copie delle persone entranti con i nuovi ID
+    // 2. Crea le copie delle persone entranti con i nuovi ID (Clone iniziale)
     const processedIncoming: Person[] = incoming.map(p => {
         return {
             ...p,
@@ -161,50 +168,49 @@ export const mergePeople = (existing: Person[], incoming: Person[]): { merged: P
         };
     });
 
-    // 3. Tenta di trovare corrispondenze semantiche (Stesso nome + Data Nascita simile)
+    // 3. Matching Semantico
     processedIncoming.forEach(newPerson => {
         const matchIndex = mergedList.findIndex(existingPerson => {
             const sameFirst = normalizeString(existingPerson.firstName) === normalizeString(newPerson.firstName);
             const sameLast = normalizeString(existingPerson.lastName) === normalizeString(newPerson.lastName);
-            // Se le date sono presenti, usale per disambiguare
-            const sameBirth = existingPerson.birthDate === newPerson.birthDate;
             
-            // Logica di match: Nome e Cognome uguali E (Data uguale OPPURE una delle due date è vuota)
-            return sameFirst && sameLast && (sameBirth || !existingPerson.birthDate || !newPerson.birthDate);
+            // Per il merge "parziale", se una delle due date manca, consideriamo il match valido sui nomi.
+            // Se entrambe le date sono presenti, devono coincidere.
+            const dateMatch = (existingPerson.birthDate === newPerson.birthDate) || !existingPerson.birthDate || !newPerson.birthDate;
+            
+            return sameFirst && sameLast && dateMatch;
         });
 
         if (matchIndex >= 0) {
-            // MATCH TROVATO: Aggiorna (Merge)
+            // MATCH TROVATO: Aggiorna Incrementale (Merge Parziale)
             const existingPerson = mergedList[matchIndex];
             
-            // Aggiorna campi se quelli nuovi sono presenti e quelli vecchi mancano
+            // Logica Merge Parziale: Mantieni i dati esistenti se i nuovi sono vuoti.
+            // Aggiungi solo le informazioni mancanti.
             const updated: Person = {
                 ...existingPerson,
+                // Aggiorna solo se il campo esistente è vuoto o se il nuovo è più specifico (semplificazione)
                 birthDate: existingPerson.birthDate || newPerson.birthDate,
                 birthPlace: existingPerson.birthPlace || newPerson.birthPlace,
                 deathDate: existingPerson.deathDate || newPerson.deathDate,
                 deathPlace: existingPerson.deathPlace || newPerson.deathPlace,
-                notes: (existingPerson.notes || '') + (newPerson.notes ? `\n[Import]: ${newPerson.notes}` : ''),
-                // Unisci relazioni senza duplicati
+                // Aggiungi note, non sovrascrivere
+                notes: (existingPerson.notes || '') + (newPerson.notes && !existingPerson.notes?.includes(newPerson.notes) ? `\n[Import]: ${newPerson.notes}` : ''),
+                
+                // Merge Relazioni (Unione insiemi)
                 spouseIds: Array.from(new Set([...existingPerson.spouseIds, ...newPerson.spouseIds])),
                 childrenIds: Array.from(new Set([...existingPerson.childrenIds, ...newPerson.childrenIds]))
             };
             
-            // Se il nuovo ha genitori definiti e il vecchio no, prendili
+            // Genitori: Se il record esistente non ha genitori ma il nuovo si, prendili.
             if (!updated.fatherId && newPerson.fatherId) updated.fatherId = newPerson.fatherId;
             if (!updated.motherId && newPerson.motherId) updated.motherId = newPerson.motherId;
 
             mergedList[matchIndex] = updated;
             
-            // Dobbiamo aggiornare la mappa ID per dire che l'ID del nuovo file in realtà punta a questa persona esistente?
-            // È complesso perché abbiamo già rimappato le relazioni interne del file importato.
-            // Per semplicità in questo prototipo, manteniamo l'unione dei dati nel record esistente,
-            // ma le relazioni create nel punto 2 puntano al "nuovo ID clone". 
-            // IDEALMENTE: Bisognerebbe correggere tutti i riferimenti nel `processedIncoming` che puntavano a `newPerson.id` 
-            // per farli puntare a `existingPerson.id`.
-            
-            // Fix relazioni inverse:
-            // Chiunque nel batch in arrivo puntava a `newPerson.id` (che ora è un duplicato) deve puntare a `existingPerson.id`.
+            // Fix relazioni inverse nel batch corrente:
+            // Tutti quelli nel file importato che puntavano a `newPerson` (che ora è fusa in `existingPerson`)
+            // devono puntare al `existingPerson.id` reale.
             processedIncoming.forEach(other => {
                 if (other.fatherId === newPerson.id) other.fatherId = existingPerson.id;
                 if (other.motherId === newPerson.id) other.motherId = existingPerson.id;
