@@ -12,7 +12,9 @@ import {
   Eye,
   EyeOff,
   Palette,
-  ChevronRight
+  ChevronRight,
+  Menu,
+  X
 } from 'lucide-react';
 import { PLACEHOLDER_IMAGE } from '../constants';
 
@@ -42,6 +44,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [viewMode, setViewMode] = useState<ViewMode>('all');
   const [hiddenClans, setHiddenClans] = useState<Set<string>>(new Set());
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   useEffect(() => {
     const handleResize = () => {
@@ -86,7 +89,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
 
     const roots = data.filter(p => !p.fatherId && !p.motherId);
     
-    // Ordiniamo i clan per importanza (numero di discendenti) per evitare che i Murri spariscano
     return roots.map((root, i) => {
       const tree = build(root.id, 0, new Set());
       const countDescendants = (node: any): number => {
@@ -99,7 +101,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
         tree,
         memberCount: countDescendants(tree)
       };
-    }).sort((a, b) => b.memberCount - a.memberCount); // Clan più popolosi prima
+    }).sort((a, b) => b.memberCount - a.memberCount);
   }, [data, viewMode, selectedPersonId]);
 
   useEffect(() => {
@@ -110,20 +112,19 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
     const g = svg.append("g");
 
     const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.05, 3])
+      .scaleExtent([0.02, 3])
       .on("zoom", (e) => g.attr("transform", e.transform));
     svg.call(zoom);
 
     const nodeW = 220;
     const nodeH = 110;
-    const hGap = 300;
-    const vGap = 220;
+    const hGap = 320;
+    const vGap = 240;
 
     let currentXOffset = 0;
+    const activeClans = clans.filter(c => !hiddenClans.has(c.rootId) || viewMode !== 'all');
 
-    clans.forEach((clan) => {
-      if (hiddenClans.has(clan.rootId) && viewMode === 'all') return;
-      
+    activeClans.forEach((clan) => {
       const root = d3.hierarchy(clan.tree);
       const treeLayout = d3.tree().nodeSize([hGap, vGap]);
       treeLayout(root);
@@ -136,7 +137,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
       const clanGroup = g.append("g")
         .attr("transform", `translate(${currentXOffset - minX + 150}, 150)`);
 
-      // Draw Paths
+      // Links
       clanGroup.selectAll(".link")
         .data(root.links())
         .enter()
@@ -144,7 +145,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
         .attr("fill", "none")
         .attr("stroke", clan.color)
         .attr("stroke-width", 3)
-        .attr("opacity", 0.3)
+        .attr("opacity", 0.25)
         .attr("d", d => {
           const sx = d.source.x, sy = d.source.y;
           const tx = d.target.x, ty = d.target.y;
@@ -161,72 +162,74 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
 
       nodeGroups.each(function(d: any) {
         const group = d3.select(this);
-        const p = d.data.person;
+        const person = d.data.person;
         const spouse = d.data.spouse;
 
-        const drawCard = (person: Person, ox: number) => {
-          const isSel = person.id === selectedPersonId;
+        const drawCard = (p: Person, ox: number) => {
+          const isSel = p.id === selectedPersonId;
           const card = group.append("g").attr("transform", `translate(${ox}, 0)`);
 
           card.append("rect")
             .attr("x", -nodeW/2).attr("y", -nodeH/2)
             .attr("width", nodeW).attr("height", nodeH)
-            .attr("rx", 16).attr("fill", "white")
-            .attr("stroke", isSel ? "#1e293b" : (person.gender === 'M' ? "#bfdbfe" : "#fbcfe8"))
+            .attr("rx", 20).attr("fill", "white")
+            .attr("stroke", isSel ? "#000" : (p.gender === 'M' ? "#bfdbfe" : "#fbcfe8"))
             .attr("stroke-width", isSel ? 4 : 2)
-            .attr("filter", "drop-shadow(0 4px 8px rgba(0,0,0,0.06))")
+            .attr("filter", "drop-shadow(0 4px 6px rgba(0,0,0,0.05))")
             .style("cursor", "pointer")
-            .on("click", (e) => { e.stopPropagation(); onSelectPerson(person); });
+            .on("click", (e) => { e.stopPropagation(); onSelectPerson(p); });
 
-          // Avatar Frame
-          const avSize = 60;
+          // Profile Image
+          const avSize = 64;
           card.append("circle").attr("r", avSize/2 + 2).attr("cx", -nodeW/2 + 40).attr("cy", 0).attr("fill", clan.color).attr("opacity", 0.1);
-          card.append("circle").attr("r", avSize/2).attr("cx", -nodeW/2 + 40).attr("cy", 0).attr("fill", "#f1f5f9").attr("stroke", clan.color).attr("stroke-width", 2);
+          card.append("circle").attr("r", avSize/2).attr("cx", -nodeW/2 + 40).attr("cy", 0).attr("fill", "#f8fafc").attr("stroke", "white").attr("stroke-width", 3);
           
-          card.append("clipPath").attr("id", `cp-${person.id}`).append("circle").attr("r", avSize/2 - 2).attr("cx", -nodeW/2 + 40).attr("cy", 0);
+          card.append("clipPath").attr("id", `cp-${p.id}`).append("circle").attr("r", avSize/2).attr("cx", -nodeW/2 + 40).attr("cy", 0);
           card.append("image")
-            .attr("xlink:href", person.photoUrl || PLACEHOLDER_IMAGE)
+            .attr("xlink:href", p.photoUrl || PLACEHOLDER_IMAGE)
             .attr("x", -nodeW/2 + 40 - avSize/2).attr("y", -avSize/2).attr("width", avSize).attr("height", avSize)
             .attr("preserveAspectRatio", "xMidYMid slice")
-            .attr("clip-path", `url(#cp-${person.id})`);
+            .attr("clip-path", `url(#cp-${p.id})`);
 
-          // Text Data
-          card.append("text").attr("x", -nodeW/2 + 80).attr("y", -15).style("font-size", "14px").style("font-weight", "800").style("fill", "#1e293b").text(person.firstName);
-          card.append("text").attr("x", -nodeW/2 + 80).attr("y", 5).style("font-size", "12px").style("font-weight", "600").style("fill", "#64748b").text(person.lastName);
-          card.append("text").attr("x", -nodeW/2 + 80).attr("y", 25).style("font-size", "10px").style("fill", clan.color).style("font-weight", "bold")
-            .text(`${person.birthDate?.slice(-4) || '?'} - ${person.deathDate?.slice(-4) || (person.isLiving ? 'Viv' : '?')}`);
+          // Info
+          card.append("text").attr("x", -nodeW/2 + 85).attr("y", -15).style("font-size", "14px").style("font-weight", "800").style("fill", "#1e293b").text(p.firstName);
+          card.append("text").attr("x", -nodeW/2 + 85).attr("y", 5).style("font-size", "12px").style("fill", "#64748b").text(p.lastName);
+          card.append("text").attr("x", -nodeW/2 + 85).attr("y", 25).style("font-size", "10px").style("fill", clan.color).style("font-weight", "bold")
+            .text(`${p.birthDate?.slice(-4) || '?'} - ${p.deathDate?.slice(-4) || (p.isLiving ? 'Viv' : '?')}`);
 
           // Gen Badge
-          card.append("circle").attr("cx", nodeW/2 - 12).attr("cy", -nodeH/2 + 12).attr("r", 10).attr("fill", "#f8fafc").attr("stroke", "#e2e8f0");
-          card.append("text").attr("x", nodeW/2 - 12).attr("y", -nodeH/2 + 15).attr("text-anchor", "middle").style("fill", "#94a3b8").style("font-size", "8px").style("font-weight", "bold").text(d.depth);
+          card.append("rect").attr("x", nodeW/2 - 25).attr("y", -nodeH/2 + 5).attr("width", 20).attr("height", 20).attr("rx", 6).attr("fill", "#f1f5f9");
+          card.append("text").attr("x", nodeW/2 - 15).attr("y", -nodeH/2 + 18).attr("text-anchor", "middle").style("fill", "#64748b").style("font-size", "9px").style("font-weight", "bold").text(d.depth + 1);
         };
 
         if (spouse) {
-          drawCard(p, -nodeW/2 - 8);
+          drawCard(person, -nodeW/2 - 8);
           drawCard(spouse, nodeW/2 + 8);
           group.append("line").attr("x1", -15).attr("x2", 15).attr("stroke", clan.color).attr("stroke-width", 2).attr("stroke-dasharray", "4,4");
         } else {
-          drawCard(p, 0);
+          drawCard(person, 0);
         }
       });
 
-      currentXOffset += clanWidth;
+      currentXOffset += clanWidth + 100;
     });
 
+    // Auto Framing Logic
     if (viewMode === 'all') {
-      svg.call(zoom.transform, d3.zoomIdentity.translate(dimensions.width/2 - 400, 100).scale(0.35));
+      const scale = dimensions.width / (currentXOffset + 500);
+      svg.call(zoom.transform, d3.zoomIdentity.translate(dimensions.width/2 - (currentXOffset * scale)/2, 100).scale(Math.min(scale, 0.4)));
     }
   }, [clans, hiddenClans, dimensions, viewMode, selectedPersonId]);
 
   return (
-    <div ref={wrapperRef} className="w-full h-full bg-[#f8fafc] relative overflow-hidden">
+    <div ref={wrapperRef} className="w-full h-full bg-[#fcfdfe] relative overflow-hidden">
       {/* Dynamic View Selector */}
       <div className="absolute top-6 left-6 z-20 flex gap-3">
-        <div className="bg-white p-1 rounded-2xl shadow-xl border border-slate-200 flex items-center">
+        <div className="bg-white/90 backdrop-blur p-1 rounded-2xl shadow-xl border border-slate-200 flex items-center">
           {[
             { id: 'all', icon: Maximize, label: 'PANORAMA' },
             { id: 'branches', icon: GitBranch, label: 'CEPPATA' },
-            { id: 'generations', icon: Layers, label: 'LINEA TEMPO' }
+            { id: 'generations', icon: Layers, label: 'TEMPO' }
           ].map(btn => (
             <button 
               key={btn.id}
@@ -239,58 +242,76 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
         </div>
       </div>
 
+      {/* Sidebar Toggle Button (Floating) */}
+      {!isSidebarOpen && (
+        <button 
+          onClick={() => setIsSidebarOpen(true)}
+          className="absolute top-6 right-6 z-30 flex items-center gap-2 bg-white px-5 py-3 rounded-2xl shadow-2xl border-2 border-emerald-50 text-emerald-600 font-bold text-xs hover:bg-emerald-50 transition-all animate-fadeIn"
+        >
+          <Menu size={16} /> CLAN
+        </button>
+      )}
+
       <svg ref={svgRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
 
-      {/* Right Toolbar: Legacy Explorer (Clan Sidebar) */}
-      <div className="absolute top-6 right-6 z-20 w-72 bg-white border rounded-3xl shadow-2xl p-6 hidden md:flex flex-col gap-4">
-        <div className="flex items-center gap-2 border-b pb-3">
-          < Palette size={18} className="text-slate-400" />
-          <h3 className="text-[12px] font-black text-slate-800 uppercase tracking-widest">Esplora Clan</h3>
-        </div>
-        
-        <div className="space-y-3 overflow-y-auto max-h-[50vh] pr-2 custom-scrollbar">
-          {clans.map(clan => (
-            <div 
-              key={clan.rootId} 
-              onClick={() => toggleClan(clan.rootId)}
-              className={`group flex items-center justify-between p-3 rounded-2xl border transition-all cursor-pointer ${hiddenClans.has(clan.rootId) ? 'bg-slate-50 opacity-40 grayscale' : 'bg-white shadow-sm border-slate-100 hover:border-slate-300 active:scale-95'}`}
-            >
-              <div className="flex items-center gap-3">
-                <div className="h-4 w-1 rounded-full" style={{ backgroundColor: clan.color }} />
-                <div className="flex flex-col">
-                    <span className="text-[11px] font-bold text-slate-800 truncate w-32">{clan.name}</span>
-                    <span className="text-[9px] text-slate-400">{clan.memberCount} membri</span>
+      {/* Sidebar a Scomparsa (Drawer) */}
+      <div className={`absolute top-0 right-0 h-full w-80 bg-white shadow-[-10px_0_30px_rgba(0,0,0,0.05)] border-l z-40 transition-transform duration-500 ease-in-out transform ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+        <div className="p-6 h-full flex flex-col">
+          <div className="flex items-center justify-between border-b pb-4 mb-6">
+            <div className="flex items-center gap-2">
+              <Palette size={18} className="text-slate-400" />
+              <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest">Esplora Clan</h3>
+            </div>
+            <button onClick={() => setIsSidebarOpen(false)} className="text-slate-400 hover:text-slate-900 transition p-1 bg-slate-50 rounded-lg">
+              <X size={20} />
+            </button>
+          </div>
+          
+          <div className="flex-1 space-y-3 overflow-y-auto pr-2 custom-scrollbar">
+            {clans.map(clan => (
+              <div 
+                key={clan.rootId} 
+                onClick={() => toggleClan(clan.rootId)}
+                className={`group flex items-center justify-between p-4 rounded-2xl border transition-all cursor-pointer ${hiddenClans.has(clan.rootId) ? 'bg-slate-50 opacity-40 grayscale' : 'bg-white shadow-sm border-slate-100 hover:border-slate-300 active:scale-95'}`}
+              >
+                <div className="flex items-center gap-4">
+                  <div className="h-5 w-1.5 rounded-full" style={{ backgroundColor: clan.color }} />
+                  <div className="flex flex-col">
+                      <span className="text-[11px] font-bold text-slate-800 truncate w-36">{clan.name}</span>
+                      <span className="text-[9px] text-slate-400">{clan.memberCount} membri</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                   {hiddenClans.has(clan.rootId) ? <EyeOff size={16} className="text-slate-400" /> : <Eye size={16} className="text-emerald-500" />}
                 </div>
               </div>
-              <div className="flex items-center gap-1">
-                 {hiddenClans.has(clan.rootId) ? <EyeOff size={14} className="text-slate-400" /> : <Eye size={14} className="text-slate-800" />}
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="bg-emerald-50 p-3 rounded-2xl border border-emerald-100 flex items-start gap-2">
-            <ChevronRight size={14} className="text-emerald-500 mt-0.5" />
-            <p className="text-[9px] text-emerald-700 leading-relaxed font-medium">
-                I clan sono ordinati per importanza storica. I Murri e i Resta sono sempre visibili in alto.
-            </p>
+            ))}
+          </div>
+
+          <div className="mt-6 bg-slate-50 p-4 rounded-3xl border flex items-start gap-3">
+              <ChevronRight size={16} className="text-slate-400 mt-1" />
+              <p className="text-[9px] text-slate-500 leading-relaxed font-medium">
+                  Clicca sull'occhio per accendere o spegnere un intero ceppo familiare nella panoramica generale.
+              </p>
+          </div>
         </div>
       </div>
 
-      {/* Stats UI */}
-      <div className="absolute bottom-6 left-6 flex items-center gap-3">
-        <div className="bg-slate-900 text-white px-5 py-2.5 rounded-2xl shadow-xl border border-slate-800 flex items-center gap-3">
+      {/* Info Stats */}
+      <div className="absolute bottom-6 left-6 flex items-center gap-3 pointer-events-none">
+        <div className="bg-slate-900/90 backdrop-blur text-white px-5 py-3 rounded-2xl shadow-xl flex items-center gap-3">
           <Users size={14} className="text-emerald-400" />
           <span className="text-[11px] font-black uppercase tracking-widest">
-            {data.length} Totali &bull; {clans.length - hiddenClans.size} Ceppi Attivi
+            {data.length} Membri &bull; {clans.length - hiddenClans.size} Attivi
           </span>
         </div>
       </div>
 
       {/* Navigation Tools */}
       <div className="absolute bottom-6 right-6 flex flex-col gap-2">
-         <button onClick={() => d3.select(svgRef.current).transition().call(d3.zoom().scaleBy as any, 1.5)} className="bg-white p-3.5 rounded-2xl border shadow-xl hover:bg-slate-50 active:scale-90 transition"><ZoomIn size={20} className="text-slate-600" /></button>
-         <button onClick={() => d3.select(svgRef.current).transition().call(d3.zoom().scaleBy as any, 0.7)} className="bg-white p-3.5 rounded-2xl border shadow-xl hover:bg-slate-50 active:scale-90 transition"><ZoomOut size={20} className="text-slate-600" /></button>
-         <button onClick={() => d3.select(svgRef.current).transition().call(d3.zoom().transform as any, d3.zoomIdentity.translate(dimensions.width/2 - 400, 100).scale(0.3))} className="bg-white p-3.5 rounded-2xl border border-blue-100 shadow-xl hover:bg-blue-50 text-blue-600 active:scale-90 transition"><Navigation size={20} /></button>
+         <button onClick={() => d3.select(svgRef.current).transition().call(d3.zoom().scaleBy as any, 1.4)} className="bg-white p-4 rounded-2xl border shadow-xl hover:bg-slate-50 active:scale-90 transition text-slate-600"><ZoomIn size={20} /></button>
+         <button onClick={() => d3.select(svgRef.current).transition().call(d3.zoom().scaleBy as any, 0.7)} className="bg-white p-4 rounded-2xl border shadow-xl hover:bg-slate-50 active:scale-90 transition text-slate-600"><ZoomOut size={20} /></button>
+         <button onClick={() => d3.select(svgRef.current).transition().call(d3.zoom().transform as any, d3.zoomIdentity.translate(dimensions.width/2, 100).scale(0.3))} className="bg-white p-4 rounded-2xl border border-blue-50 shadow-xl hover:bg-blue-50 text-blue-600 active:scale-90 transition"><Navigation size={20} /></button>
       </div>
     </div>
   );
