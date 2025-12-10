@@ -11,7 +11,6 @@ import {
   Menu,
   X,
   Loader2,
-  Filter,
   Network
 } from 'lucide-react';
 import { PLACEHOLDER_IMAGE } from '../constants';
@@ -44,6 +43,8 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [isPending, startTransition] = useTransition();
   const [viewMode, setViewMode] = useState<ViewMode>('all');
+  
+  // Set di ID dei clan NASCOSTI. Se un ID è qui, non viene disegnato.
   const [hiddenClans, setHiddenClans] = useState<Set<string>>(new Set());
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
@@ -71,13 +72,15 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
   };
 
   const toggleClan = (id: string) => {
-    startTransition(() => {
-        setHiddenClans(prev => {
-          const next = new Set(prev);
-          if (next.has(id)) next.delete(id);
-          else next.add(id);
-          return next;
-        });
+    // Non usiamo transition qui per rendere l'UI reattiva immediatamente al click
+    setHiddenClans(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+          next.delete(id); // Mostra
+      } else {
+          next.add(id); // Nascondi
+      }
+      return next;
     });
   };
 
@@ -185,22 +188,24 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
 
   }, [data, viewMode, selectedPersonId]);
 
-  // --- RENDERING D3 "MAGNETIC MERGE" CON FILTRO DUPLICATI ---
+  // --- RENDERING D3 "ADAPTIVE & MAGNETIC MERGE" ---
   useEffect(() => {
     if (!clans.length || !svgRef.current || !dimensions.width) return;
 
+    // 1. Pulisci il Canvas
     const svg = d3.select(svgRef.current);
+    svg.selectAll("*").remove(); // CRITICO: Rimuove tutto prima di ridisegnare
+
+    const g = svg.append("g").attr("id", "main-group");
     
     const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.05, 2.5])
+      .scaleExtent([0.05, 3])
       .on("zoom", (e) => {
           g.attr("transform", e.transform);
           lastTransformRef.current = e.transform;
           if (e.sourceEvent) hasInteractedRef.current = true;
       });
 
-    svg.selectAll("*").remove();
-    const g = svg.append("g").attr("id", "main-group");
     svg.call(zoom);
 
     if (lastTransformRef.current) {
@@ -208,24 +213,41 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
         svg.call(zoom.transform, lastTransformRef.current);
     }
 
-    const cardWidth = 200; 
-    const cardHeight = 70; 
-    const vGap = 130; 
-    const spouseGap = 20;
-    const avatarSize = 48;
-
+    // 2. Filtra Clan Attivi
     const activeClans = clans.filter(c => !hiddenClans.has(c.rootId));
 
     if (activeClans.length === 0) {
-        g.append("text").attr("x", 0).attr("y", 0).text("Nessun clan visibile. Attivane uno dal menu.").style("font-size", "20px").attr("text-anchor", "middle").attr("fill", "#94a3b8");
+        g.append("text").attr("x", dimensions.width/2).attr("y", dimensions.height/2)
+         .text("Seleziona almeno un clan dal menu laterale.")
+         .style("font-size", "18px")
+         .attr("text-anchor", "middle")
+         .attr("fill", "#64748b");
         return;
     }
 
-    // --- ALGORITMO DI DISEGNO MAGNETICO ---
+    // 3. ADAPTIVE SCALING (RIDIMENSIONAMENTO DINAMICO)
+    // Se ci sono più clan (che quindi si intersecheranno), riduciamo le dimensioni
+    // per farli stare adiacenti senza sovrapposizioni massicce.
+    const isMultiClan = activeClans.length > 1;
+    const densityFactor = isMultiClan ? 0.65 : 1; // Riduce al 65% se multi-clan
+
+    const baseCardWidth = 200;
+    const baseCardHeight = 70;
+    const baseVGap = 130;
+    const baseSpouseGap = 20;
+    const baseAvatarSize = 48;
+
+    const cardWidth = baseCardWidth * densityFactor; 
+    const cardHeight = baseCardHeight * densityFactor; 
+    const vGap = baseVGap * densityFactor; 
+    const spouseGap = baseSpouseGap * densityFactor;
+    const avatarSize = baseAvatarSize * densityFactor;
+    const fontSizeName = isMultiClan ? "9px" : "12px";
+    const fontSizeDate = isMultiClan ? "8px" : "10px";
+
+    // --- ALGORITMO DI DISEGNO ---
     
-    // Mappa globale delle posizioni per allineamento
     const globalPositions = new Map<string, {x: number, y: number, clanId: string}>();
-    // Set per tracciare chi è GIÀ stato renderizzato nel DOM (per evitare doppi nodi visuali)
     const renderedNodes = new Set<string>(); 
 
     let maxXSoFar = 0;
@@ -236,7 +258,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
     const findPivot = (clanTree: any): { offsetX: number, offsetY: number, found: boolean } => {
         const root = d3.hierarchy(clanTree);
         const descendants = root.descendants();
-        // Layout temporaneo per calcolare le coordinate relative interne
         const tempLayout = d3.tree().nodeSize([cardWidth, vGap]).separation(() => 1);
         tempLayout(root);
 
@@ -265,7 +286,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
             clanIndexToProcess = 0;
             isIsland = true;
         } else {
-            // Cerchiamo un clan che si aggancia a quelli già disegnati
             for (let i = 0; i < remainingClans.length; i++) {
                 const pivot = findPivot(remainingClans[i].tree);
                 if (pivot.found) {
@@ -285,17 +305,18 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
         remainingClans.splice(clanIndexToProcess, 1);
         processedClanIds.add(clan.rootId);
 
-        // Calcolo Layout
         const root = d3.hierarchy(clan.tree);
         const treeLayout = d3.tree()
             .nodeSize([cardWidth, vGap]) 
             .separation((a: any, b: any) => {
+                // Aumentiamo la separazione per evitare che i rami si scontrino lateralmente
                 const aIsCouple = !!a.data.spouse;
                 const bIsCouple = !!b.data.spouse;
-                let sep = 1.15;
-                if (aIsCouple) sep += 0.55; 
-                if (bIsCouple) sep += 0.55;
-                if (a.parent !== b.parent) sep += 0.3;
+                let sep = 1.2; // Base più larga
+                if (aIsCouple) sep += 0.6; 
+                if (bIsCouple) sep += 0.6;
+                // Se sono cugini (genitori diversi), spingili ancora più lontano
+                if (a.parent !== b.parent) sep += 0.5;
                 return sep;
             });
         treeLayout(root);
@@ -310,7 +331,7 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
             if (processedClanIds.size === 1) {
                 finalOffsetX = -localMinX;
             } else {
-                finalOffsetX = maxXSoFar - localMinX + cardWidth + 250;
+                finalOffsetX = maxXSoFar - localMinX + cardWidth + (250 * densityFactor);
             }
         } else {
             finalOffsetX = bestOffset.x;
@@ -321,10 +342,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
             const absX = d.x + finalOffsetX;
             if (absX > maxXSoFar) maxXSoFar = absX;
             
-            // Aggiorniamo la mappa globale delle posizioni
-            // Questo è fondamentale: anche se non disegneremo il nodo (perché duplicato),
-            // dobbiamo sapere dove "avrebbe" dovuto essere per calcolare i pivot futuri
-            // e per le linee di connessione.
             const pId = d.data.person.id;
             const sId = d.data.spouse?.id;
             
@@ -335,22 +352,13 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
         const clanGroup = g.append("g")
             .attr("transform", `translate(${finalOffsetX}, ${finalOffsetY})`);
 
-        // --- FILTRAGGIO INTELLIGENTE DELLE LINEE (UNIQUE DESCENT) ---
-        // Disegniamo una linea SOLO SE il nodo target (figlio) non è stato ancora renderizzato da un altro clan.
-        // Se il figlio esiste già, significa che la sua discendenza è già stata tracciata dal clan precedente.
-        // Tuttavia, dobbiamo disegnare la linea che va dal "Nuovo Genitore" al "Vecchio Figlio" (punto di fusione).
-        // Il problema è quando ANCHE la sorgente (Genitore) è già renderizzata.
-        // Regola: Non disegnare il link se Source E Target sono entrambi già rendered.
-        
+        // --- LINKS ---
         const linksToDraw = root.links().filter(link => {
              const sourceId = link.source.data.id;
              const targetId = link.target.data.id;
              const sourceAlreadyRendered = renderedNodes.has(sourceId);
              const targetAlreadyRendered = renderedNodes.has(targetId);
-
-             // Se entrambi esistono già graficamente, la linea è un duplicato di un albero precedente -> SKIP
              if (sourceAlreadyRendered && targetAlreadyRendered) return false;
-
              return true;
         });
 
@@ -371,10 +379,10 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
             .append("path")
             .attr("fill", "none")
             .attr("stroke", "#94a3b8")
-            .attr("stroke-width", 2)
+            .attr("stroke-width", 2 * densityFactor) // Linee più sottili se denso
             .attr("d", linkPathGenerator);
 
-        // --- DISEGNO NODI CON SOPPRESSIONE DUPLICATI ---
+        // --- NODES ---
         const descendants = root.descendants();
         const nodeGroups = clanGroup.selectAll(".node")
             .data(descendants)
@@ -387,18 +395,13 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
             const spouse = d.data.spouse;
             const group = d3.select(this);
 
-            // Controlla se sono già stati renderizzati visivamente
             const pAlreadyRendered = renderedNodes.has(p.id);
             const spouseAlreadyRendered = spouse ? renderedNodes.has(spouse.id) : false;
 
-            // Marchiamoli come renderizzati per i prossimi cicli/link
             renderedNodes.add(p.id);
             if(spouse) renderedNodes.add(spouse.id);
 
             const drawCard = (person: Person, offsetX: number, skipRender: boolean) => {
-                // SE IL NODO ESISTE GIÀ GRAFICAMENTE (dal clan precedente), NON DISEGNARLO DI NUOVO.
-                // Questo evita l'effetto "grassetto" o sovrapposizioni imprecise.
-                // Il nodo esiste già nella posizione corretta grazie all'allineamento.
                 if (skipRender) return;
 
                 const isSel = person.id === selectedPersonId;
@@ -410,14 +413,14 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 card.append("rect")
                     .attr("x", -cardWidth/2).attr("y", -cardHeight/2)
                     .attr("width", cardWidth).attr("height", cardHeight)
-                    .attr("rx", 6)
+                    .attr("rx", 6 * densityFactor)
                     .attr("fill", "white")
                     .attr("stroke", strokeColor)
                     .attr("stroke-width", isSel ? 3 : 1)
                     .style("cursor", "pointer")
                     .on("click", (e) => { e.stopPropagation(); onSelectPerson(person); });
 
-                const avX = -cardWidth/2 + 32;
+                const avX = -cardWidth/2 + (32 * densityFactor);
                 card.append("circle")
                     .attr("cx", avX).attr("cy", 0).attr("r", avatarSize/2)
                     .attr("fill", "#f1f5f9").attr("stroke", strokeColor).attr("stroke-width", 1);
@@ -433,14 +436,16 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                     .attr("preserveAspectRatio", "xMidYMid slice")
                     .attr("clip-path", `url(#${uniqueClipId})`);
 
-                const textX = -cardWidth/2 + 64;
-                const nameY = -8;
+                const textX = -cardWidth/2 + (64 * densityFactor);
+                const nameY = -8 * densityFactor;
                 const fullName = `${person.firstName} ${person.lastName}`;
-                const displayName = fullName.length > 22 ? fullName.substring(0, 20) + "..." : fullName;
+                // Troncamento nome più aggressivo se denso
+                const maxLen = isMultiClan ? 15 : 22;
+                const displayName = fullName.length > maxLen ? fullName.substring(0, maxLen-2) + "..." : fullName;
             
                 card.append("text")
                     .attr("x", textX).attr("y", nameY)
-                    .style("font-size", "12px").style("font-weight", "700").style("fill", "#334155")
+                    .style("font-size", fontSizeName).style("font-weight", "700").style("fill", "#334155")
                     .text(displayName);
             
                 const dateStr = person.birthDate 
@@ -448,12 +453,12 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                     : '...';
 
                 card.append("text")
-                    .attr("x", textX).attr("y", nameY + 16)
-                    .style("font-size", "10px").style("fill", "#64748b")
+                    .attr("x", textX).attr("y", nameY + (16 * densityFactor))
+                    .style("font-size", fontSizeDate).style("fill", "#64748b")
                     .text(dateStr);
 
                 if (!person.isLiving) {
-                    card.append("text").attr("x", cardWidth/2 - 12).attr("y", cardHeight/2 - 8).text("†").style("font-size", "12px").style("fill", "#94a3b8");
+                    card.append("text").attr("x", cardWidth/2 - 12).attr("y", cardHeight/2 - 8).text("†").style("font-size", fontSizeName).style("fill", "#94a3b8");
                 }
             };
 
@@ -461,7 +466,6 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 const leftOffset = -cardWidth/2 - spouseGap/2;
                 const rightOffset = cardWidth/2 + spouseGap/2; 
 
-                // Disegna la staffa solo se stiamo effettivamente disegnando almeno uno dei due nodi
                 if (!pAlreadyRendered || !spouseAlreadyRendered) {
                     group.append("path")
                         .attr("d", `M${-spouseGap/2 - 5},0 H${spouseGap/2 + 5}`)
@@ -477,40 +481,19 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
         });
     }
 
-    // --- AUTO FIT ---
+    // --- AUTO FIT (Solo se l'utente non sta interagendo) ---
     if (!hasInteractedRef.current && dimensions.width > 0) {
-        try {
-            let focusNodeX = 0;
-            let focusNodeY = 0;
-            let foundFocus = false;
-
-            if (globalPositions.has(FOCUS_USER_ID)) {
-                const pos = globalPositions.get(FOCUS_USER_ID);
-                if (pos) {
-                    focusNodeX = pos.x;
-                    focusNodeY = pos.y;
-                    foundFocus = true;
-                }
-            }
-
-            if (foundFocus) {
-                const scale = 0.85; 
-                const tx = dimensions.width / 2 - focusNodeX * scale;
-                const ty = 100; 
-                svg.transition().duration(1000)
-                   .call(zoom.transform as any, d3.zoomIdentity.translate(tx, ty).scale(scale));
-            } else {
-                const bounds = (g.node() as SVGGraphicsElement).getBBox();
-                if (bounds.width > 0) {
-                     const scale = 0.85 / Math.max(bounds.width / dimensions.width, bounds.height / dimensions.height);
-                     const tx = (dimensions.width - bounds.width * scale) / 2 - bounds.x * scale;
-                     svg.transition().duration(1000).call(zoom.transform as any, d3.zoomIdentity.translate(tx, 50).scale(Math.min(scale, 1)));
-                }
-            }
-        } catch (e) { console.error(e); }
+         const bounds = (g.node() as SVGGraphicsElement).getBBox();
+         if (bounds.width > 0) {
+              // Zoom out leggermente maggiore per avere una vista d'insieme migliore
+              const scale = 0.85 / Math.max(bounds.width / dimensions.width, bounds.height / dimensions.height);
+              const tx = (dimensions.width - bounds.width * scale) / 2 - bounds.x * scale;
+              const ty = 50; 
+              svg.transition().duration(750).call(zoom.transform as any, d3.zoomIdentity.translate(tx, ty).scale(Math.min(scale, 1)));
+         }
     }
 
-  }, [clans, hiddenClans, dimensions, selectedPersonId]); 
+  }, [clans, hiddenClans, dimensions, selectedPersonId]); // HiddenClans è dipendenza fondamentale
 
   return (
     <div ref={wrapperRef} className="w-full h-full bg-[#f1f5f9] relative overflow-hidden">
@@ -566,7 +549,9 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
           <div className="flex items-center justify-between border-b border-slate-200 pb-5 mb-5">
             <div>
                 <h3 className="text-lg font-serif font-bold text-slate-800">Clan Familiari</h3>
-                <p className="text-xs text-slate-500">I clan si uniranno automaticamente.</p>
+                <p className="text-xs text-slate-500">
+                    {clans.filter(c => !hiddenClans.has(c.rootId)).length} attivi su {clans.length}
+                </p>
             </div>
             <button onClick={() => setIsSidebarOpen(false)} className="text-slate-400 hover:text-slate-900 transition p-2 hover:bg-slate-200 rounded-full">
               <X size={20} />
@@ -575,34 +560,36 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
           
           <div className="flex-1 space-y-3 overflow-y-auto pr-2 custom-scrollbar p-1">
             <div className="text-xs text-slate-400 uppercase tracking-widest font-bold mb-2 pl-1">Capostipiti</div>
-            {clans.map(clan => (
+            {clans.map(clan => {
+              const isHidden = hiddenClans.has(clan.rootId);
+              return (
               <div 
                 key={clan.rootId} 
                 onClick={() => toggleClan(clan.rootId)}
                 className={`group flex items-center justify-between p-3 rounded-lg border transition-all cursor-pointer select-none
-                  ${hiddenClans.has(clan.rootId) 
-                    ? 'bg-slate-100 border-dashed border-slate-300 opacity-60' 
-                    : 'bg-white border-slate-200 shadow-sm hover:border-emerald-400'}
+                  ${isHidden 
+                    ? 'bg-slate-100 border-dashed border-slate-300 opacity-60 grayscale' 
+                    : 'bg-white border-slate-200 shadow-sm hover:border-emerald-400 ring-1 ring-transparent hover:ring-emerald-100'}
                 `}
               >
                 <div className="flex items-center gap-3">
-                  <div className={`h-8 w-8 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-sm`} style={{ backgroundColor: clan.color }}>
+                  <div className={`h-8 w-8 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-sm transition-colors duration-300`} style={{ backgroundColor: isHidden ? '#cbd5e1' : clan.color }}>
                       {clan.name.charAt(0)}
                   </div>
                   <div className="flex flex-col">
-                      <span className="text-sm font-bold text-slate-800 leading-tight truncate w-32">{clan.name}</span>
+                      <span className={`text-sm font-bold leading-tight truncate w-32 ${isHidden ? 'text-slate-500 line-through' : 'text-slate-800'}`}>{clan.name}</span>
                       <span className="text-[10px] text-slate-500 mt-0.5">{clan.memberCount} membri</span>
                   </div>
                 </div>
-                <div className="text-slate-300 group-hover:text-emerald-500 transition-colors">
-                   {hiddenClans.has(clan.rootId) ? <EyeOff size={18} /> : <Eye size={18} />}
+                <div className={`transition-colors ${isHidden ? 'text-slate-400' : 'text-emerald-500'}`}>
+                   {isHidden ? <EyeOff size={18} /> : <Eye size={18} />}
                 </div>
               </div>
-            ))}
+            )})}
           </div>
           
           <div className="mt-4 pt-4 border-t text-[10px] text-slate-400 text-center leading-relaxed">
-             Sistema Smart Merge attivo: I rami con membri in comune verranno sovrapposti per creare un albero unificato.
+             <strong>Modalità Adattiva:</strong> Quando attivi più clan, le schede si riducono automaticamente per evitare sovrapposizioni.
           </div>
         </div>
       </div>
@@ -614,15 +601,11 @@ export const FamilyTree: React.FC<FamilyTreeProps> = ({ data, onSelectPerson, se
                 hasInteractedRef.current = false; 
                 setHiddenClans(new Set()); 
                 setViewMode('all');
-                // Trigger manuale zoom reset
+                // Force Update logic
                 const svg = d3.select(svgRef.current);
                 const g = svg.select("#main-group");
-                const bounds = (g.node() as any)?.getBBox();
-                if(bounds) {
-                    const scale = 0.85 / Math.max(bounds.width / dimensions.width, bounds.height / dimensions.height);
-                    const tx = (dimensions.width - bounds.width * scale) / 2 - bounds.x * scale;
-                    svg.transition().duration(750).call(d3.zoom().transform as any, d3.zoomIdentity.translate(tx, 50).scale(scale));
-                }
+                // Reset zoom
+                svg.transition().duration(750).call(d3.zoom().transform as any, d3.zoomIdentity.translate(0, 0).scale(1));
             }} 
             className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xl hover:bg-slate-50 text-slate-700 active:scale-95 transition"
             title="Reset Vista"
